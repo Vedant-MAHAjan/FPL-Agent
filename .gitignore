@@ -1,0 +1,43 @@
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.p12
+*.pfx
+.netrc
+
+# Python environments and generated files
+.venv/
+.venv-*/
+venv/
+env/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.pyright/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+build/
+dist/
+*.egg-info/
+
+# Personal FPL state and reproducible runtime output
+data/raw/
+data/processed/
+data/judgment/
+data/memory/
+
+# Machine-specific editor and agent settings
+.DS_Store
+.vscode/
+.idea/
+.claude/settings.local.json
+
+# Local logs and temporary files
+*.log
+*.tmp
