@@ -27,3 +27,19 @@ def get_event_live(gw: int) -> dict:
     resp = requests.get(f"{BASE_URL}/event/{gw}/live/", timeout=15)
     resp.raise_for_status()
     return resp.json()
+
+
+def get_entry_picks(entry_id: int, gw: int) -> dict:
+    """The team an entry fielded in a given gameweek. Public only after that gw's deadline
+    passes; raises for an unset/future gw."""
+    resp = requests.get(f"{BASE_URL}/entry/{entry_id}/event/{gw}/picks/", timeout=15)
+    resp.raise_for_status()
+    return resp.json()
+
+
+def get_element_summary(element_id: int) -> dict:
+    """Per-player detail: this season's game-by-game history (minutes, xG, xA, points) plus
+    upcoming fixtures. The source for in-season form/underlying-stat trends."""
+    resp = requests.get(f"{BASE_URL}/element-summary/{element_id}/", timeout=15)
+    resp.raise_for_status()
+    return resp.json()
