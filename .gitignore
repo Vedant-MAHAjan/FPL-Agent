@@ -26,11 +26,9 @@ build/
 dist/
 *.egg-info/
 
-# Personal FPL state and reproducible runtime output
-data/raw/
-data/processed/
-data/judgment/
-data/memory/
+# Personal FPL state and reproducible runtime output — ignore the whole dir so ad-hoc
+# outputs (scans, trials) in new subfolders can never leak
+data/
 
 # Machine-specific editor and agent settings
 .DS_Store
