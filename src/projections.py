@@ -317,23 +317,32 @@ def _set_piece_role(player: dict) -> dict:
 
 
 def project_player_horizon(
-    player: dict, pos_avg: dict, scoring: dict, fixtures_by_gw_team: dict, european_competition_by_team: dict = None
+    player: dict, pos_avg: dict, scoring: dict, fixtures_by_gw_team: dict,
+    european_competition_by_team: dict = None, difficulty_fn=None,
 ) -> dict:
+    """`difficulty_fn(pos, opponent_id, was_home, fdr) -> multiplier` lets a caller supply a
+    form-grounded difficulty (see opponent_strength.make_difficulty_fn). When None, falls back to
+    the static-FDR multiplier so existing callers are unchanged."""
     pos = player["element_type"]
     team_id = player["team"]
     base = _base_player_points(player, pos_avg, scoring)
 
     per_gw = []
     total_points = 0.0
+    mults = []
     for gw, team_fixtures in fixtures_by_gw_team.items():
         fixtures_this_gw = team_fixtures.get(team_id, [])
         gw_points = 0.0
         gw_fixtures = []
         for opponent, was_home, fdr in fixtures_this_gw:
-            mult = _fdr_mult(fdr)
+            mult = difficulty_fn(pos, opponent, was_home, fdr) if difficulty_fn else _fdr_mult(fdr)
+            mults.append(mult)
             pts = base["per_fixture_total"] * mult
             gw_points += pts
-            gw_fixtures.append({"opponent": opponent, "was_home": was_home, "fdr": fdr, "points": round(pts, 2)})
+            gw_fixtures.append({
+                "opponent": opponent, "was_home": was_home, "fdr": fdr,
+                "difficulty_mult": round(mult, 3), "points": round(pts, 2),
+            })
         per_gw.append({"gw": gw, "fixtures": gw_fixtures, "points": round(gw_points, 2)})
         total_points += gw_points
 
@@ -346,6 +355,9 @@ def project_player_horizon(
         "status": player["status"],
         "expected_minutes": base["expected_minutes"],
         "projected_points": round(total_points, 2),
+        # avg fixture multiplier over the horizon: >1 easy run, <1 hard run. Surfaced so a hot-form
+        # player heading into a brutal run is visibly discounted, not hidden inside one number.
+        "avg_fixture_mult": round(sum(mults) / len(mults), 3) if mults else 1.0,
         "per_gw": per_gw,
         "breakdown_per_fixture": base["breakdown"],
         "low_confidence": base["low_confidence"],
@@ -379,7 +391,11 @@ def build_multi_gw_projections(
     start_gw: int = DEFAULT_START_GW,
     num_gws: int = DEFAULT_HORIZON,
     rate_baseline: dict | None = None,
+    difficulty_fn=None,
 ) -> list:
+    """`difficulty_fn` (from opponent_strength.make_difficulty_fn) grounds fixture difficulty in
+    this season's actual results instead of the static FDR label. When None, the static FDR is
+    used - identical to prior behaviour."""
     projection_bootstrap = apply_rate_baseline(bootstrap, rate_baseline)
     players = load_selectable_players(projection_bootstrap)
     scoring = load_scoring_rules(bootstrap)
@@ -387,6 +403,7 @@ def build_multi_gw_projections(
     fixtures_by_gw_team = build_fixtures_by_gw_team(fixtures, start_gw, num_gws)
     euro_by_team = european_competition_by_team(bootstrap)
     projections = [
-        project_player_horizon(p, pos_avg, scoring, fixtures_by_gw_team, euro_by_team) for p in players
+        project_player_horizon(p, pos_avg, scoring, fixtures_by_gw_team, euro_by_team, difficulty_fn)
+        for p in players
     ]
     return sorted(projections, key=lambda p: p["projected_points"], reverse=True)
