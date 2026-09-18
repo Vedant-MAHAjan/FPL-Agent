@@ -26,15 +26,20 @@ rebuild that. The differentiator is the judgment layer described below.
 - Source for qualitative signals: free RSS/public feeds (BBC Sport, official club
   sites) — NOT the X/Twitter API (now paid, explicitly ruled out to preserve the
   zero-cost constraint).
-- Action space per gameweek: CONFIRM the optimizer's pick, ADJUST it, or VETO it —
+- Action space per gameweek: CONFIRM the optimizer's pick, ADJUST it, VETO it, or
+  PROPOSE a pick the optimizer didn't rank highly —
   with a stated rationale and an explicit confidence tier:
   - "High confidence" = stats-grounded, no qualitative override
   - "Medium/Low confidence" = judgment-based, news-driven, unconfirmed signal
-- OPEN DECISION (resolve before building this layer): should the judgment layer
-  be restricted to confirm/veto only (safer, easier to score later), or allowed to
-  propose a transfer the optimizer didn't rank highly (higher ceiling, harder to
-  attribute credit/blame during evaluation)? Default to confirm/veto-only unless
-  a reason emerges to widen it.
+- RESOLVED (2026-09-04): the judgment layer MAY invent/propose picks, not just
+  confirm/veto — a ping-pong loop where judgment proposes freely and the numeric
+  layer scores the proposal on stats/fixtures. Evaluability is preserved by an
+  explicit guardrail: the pure numeric-only pick is still logged every week as the
+  control (the road not taken), and each override records the numeric projection
+  gap it is betting against — so "does judgment beat the model" stays answerable
+  even with the wider freedom. (Without that control the freedom would make the
+  project unfalsifiable, which is the trap the original confirm/veto-only default
+  was guarding against.)
 
 ### 3. Persistent memory (markdown/JSON log, same pattern as the team's internal
    code-reviewer agent — file-based feedback storage)
