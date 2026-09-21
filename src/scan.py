@@ -57,6 +57,9 @@ def scan_pool(bootstrap, fixtures, owned_ids, start_gw, horizon=3, per_pos=8, mi
                 "total_points": e["total_points"], "ep_next": float(e["ep_next"]),
                 "proj_horizon": round(p["projected_points"], 1) if p else None,
                 "avg_fixture_mult": p["avg_fixture_mult"] if p else None,
+                "xgi_per90": p.get("xgi_per90") if p else None,
+                "gi_overperformance": p.get("gi_overperformance") if p else None,
+                "sustainability": p.get("sustainability") if p else None,
                 "value": round(e["total_points"] / (e["now_cost"] / 10), 1),
                 "owned": e["id"] in owned_ids, "own_pct": float(e["selected_by_percent"]),
                 "fixtures": _fixstr(e["team"], fixtures, teams, gws),
@@ -85,6 +88,13 @@ def format_scan(scan, top=5):
             fixmark = ""  # flag the "hot form but hard run" trap explicitly
             if fm is not None:
                 fixmark = f" fixSwing={fm:>4.2f}" + ("  <hard run" if fm < 0.95 else ("  <easy run" if fm > 1.05 else ""))
+            # sustainability: is the form backed by underlying, or over/under-performing xGI?
+            sus = r.get("sustainability")
+            susmark = ""
+            if sus:
+                xgi = r.get("xgi_per90"); over = r.get("gi_overperformance")
+                tag = {"OVER": "!OVER", "UNDER": "~UNDER", "backed": " ok"}.get(sus, "")
+                susmark = f" xGI/90={xgi:>4} {tag}(G+A{over:+.1f}vsxGI)"
             lines.append(f"    {r['name']:13s}{r['team']:5s}£{r['price']:>4.1f} form={r['form']:>4} "
-                         f"proj={proj}{fixmark} own={r['own_pct']:>4}%{mark}")
+                         f"proj={proj}{fixmark}{susmark} own={r['own_pct']:>4}%{mark}")
     return "\n".join(lines)

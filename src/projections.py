@@ -300,6 +300,31 @@ def _fdr_mult(fdr: int) -> float:
     return 1 + (3 - fdr) * 0.075 if fdr is not None else 1.0
 
 
+def _sustainability(player: dict) -> dict:
+    """Is this season's output BACKED by underlying numbers, or is it finishing/variance that will
+    regress? Recent points/form alone can't tell you - a player on a hot streak off a tiny xGI base
+    (finishing above expectation) is a different bet from one whose returns match his chances, or one
+    UNDER-performing his xGI (returns statistically owed). The projection scores attack on xG rates
+    already, so this doesn't change the number - it SURFACES the gap so a human/judgment call can see
+    it. `gi_overperformance` = actual (goals+assists) minus expected goal involvements, this season.
+    """
+    actual_gi = _f(player, "goals_scored") + _f(player, "assists")
+    expected_gi = _f(player, "expected_goal_involvements")
+    xgi90 = _f(player, "expected_goal_involvements_per_90")
+    over = actual_gi - expected_gi
+    if over >= 1.0 and actual_gi >= 1.5 * max(expected_gi, 0.1):
+        label = "OVER"   # returns running ahead of underlying -> regression-down risk (hot but hollow)
+    elif over <= -1.0:
+        label = "UNDER"  # underlying ahead of returns -> positive regression owed
+    else:
+        label = "backed"  # returns roughly match the underlying signal
+    return {
+        "xgi_per90": round(xgi90, 3),
+        "gi_overperformance": round(over, 2),
+        "sustainability": label,
+    }
+
+
 def _set_piece_role(player: dict) -> dict:
     """Informational only - NOT folded into the points formula. Last season's per-90 goal/assist
     rate already reflects whatever penalties/set pieces that player took last season, so adding a
@@ -358,6 +383,8 @@ def project_player_horizon(
         # avg fixture multiplier over the horizon: >1 easy run, <1 hard run. Surfaced so a hot-form
         # player heading into a brutal run is visibly discounted, not hidden inside one number.
         "avg_fixture_mult": round(sum(mults) / len(mults), 3) if mults else 1.0,
+        # underlying-vs-actual read so recent form/points can't mislead a pick on its own.
+        **_sustainability(player),
         "per_gw": per_gw,
         "breakdown_per_fixture": base["breakdown"],
         "low_confidence": base["low_confidence"],
