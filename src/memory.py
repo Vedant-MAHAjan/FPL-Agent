@@ -218,6 +218,16 @@ def record_outcome(gw: int, live_points_by_id: dict = None, force: bool = False)
     vice_pts = pts(record["vice_captain_id"])
     captain_choice_delta = captain_pts - vice_pts  # >0 = captaining this player beat captaining the VC
 
+    # projected_points is a HORIZON total (summed over every GW in record["horizon"], see
+    # projections.project_player_horizon), but `actual` below is a SINGLE gameweek's points.
+    # Comparing the two directly is a unit mismatch - it made multi-GW projections look like
+    # chronic misses and skewed the "High confidence underperforms" calibration finding. Normalize
+    # the projection to a per-GW figure so both sides of beat_projection are in the same unit.
+    # horizon is stored as an inclusive (start_gw, end_gw) pair (see judgment_pass.log_decision),
+    # so the number of gameweeks it spans is end - start + 1 - NOT len(horizon), which is always 2.
+    horizon = record.get("horizon") or []
+    n_gws = (horizon[1] - horizon[0] + 1) if len(horizon) == 2 else max(len(horizon), 1)
+
     call_hits = []
     for call in record["judgment_log"]:
         pid = call["player_id"]
@@ -225,10 +235,14 @@ def record_outcome(gw: int, live_points_by_id: dict = None, force: bool = False)
             continue
         actual = live_points_by_id[pid]
         projected = call.get("projected_points")
+        projected_per_gw = (projected / n_gws) if projected is not None else None
         outcome = {
             "player_id": pid, "confidence": call["confidence"], "action": call["action"],
-            "projected_points": projected, "actual_points": actual,
-            "beat_projection": (actual >= projected) if projected is not None else None,
+            "projected_points": projected,  # horizon total, as logged
+            "projected_points_per_gw": (round(projected_per_gw, 2) if projected_per_gw is not None else None),
+            "horizon_gws": n_gws,
+            "actual_points": actual,
+            "beat_projection": (actual >= projected_per_gw) if projected_per_gw is not None else None,
         }
         if call["action"] == VETO and "replacement_id" in call:
             outcome["road_not_taken"] = {
