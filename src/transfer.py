@@ -19,13 +19,36 @@ def sell_price(purchase_price: int, now_cost: int) -> int:
     return purchase_price + profit // 2
 
 
+def _departed_player_stub(owned: dict) -> dict:
+    """A zero-projection, unavailable stand-in for an owned player who has dropped out of
+    projections entirely (e.g. went out on loan and was removed from bootstrap upstream). Without
+    this the optimizer raises on the missing id and the whole weekly pipeline crashes. The stub
+    keeps the squad/position constraints intact and, being unavailable with 0 projected points,
+    gets parked on the bench and sold as soon as a transfer is available - which is exactly the
+    real-world handling ("you own a player who no longer exists in the game; sell him")."""
+    return {
+        "id": owned["id"],
+        "web_name": owned.get("web_name", f"id{owned['id']}"),
+        "team": owned["team"],
+        "element_type": owned["element_type"],
+        "now_cost": owned["purchase_price"],  # no live price; purchase price -> break-even sale
+        "status": "u",  # unavailable: optimizer won't start it, lets an owned one be sold not forced
+        "projected_points": 0.0,
+    }
+
+
 def best_transfer_plan(projections: list, rules: dict, squad_state: dict, free_transfers: int) -> dict:
     projections_by_id = {p["id"]: p for p in projections}
+    # Any owned player missing from projections has departed the game (loan/transfer out, removed
+    # upstream). Inject a zero-projection stub so the optimizer can sell them instead of crashing.
+    stubs = [_departed_player_stub(p) for p in squad_state["squad"] if p["id"] not in projections_by_id]
+    if stubs:
+        projections = projections + stubs
+        projections_by_id = {p["id"]: p for p in projections}
     owned_ids = {p["id"] for p in squad_state["squad"]}
     sell_price_by_id = {
         p["id"]: sell_price(p["purchase_price"], projections_by_id[p["id"]]["now_cost"])
         for p in squad_state["squad"]
-        if p["id"] in projections_by_id
     }
     bank = squad_state["bank"]
 
