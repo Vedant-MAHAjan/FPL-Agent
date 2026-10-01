@@ -18,19 +18,37 @@ from projections import RATE_STAT_FIELDS, _f, _player_rate, compute_position_ave
 
 PRIOR_MINUTES = 600          # strength of the prior in minutes; regresses small samples while still weighting live form
 MIN_LAST_SEASON_MINUTES = 300  # below this, last season isn't a reliable prior -> use position average
+SEASON_GWS = 38
+ROLE_CONF_GWS = 6.0          # this-season GWs after which the live start-rate is fully trusted as the role signal
 
 
 def completed_gameweeks(bootstrap: dict) -> int:
     return sum(1 for e in bootstrap.get("events", []) if e.get("finished"))
 
 
-def _reliability_minutes(this_min, last_min, completed_gws):
+def _reliability_minutes(this_min, last_min, completed_gws, starts=None):
     """A full-season-equivalent minutes figure for the shrink/starter factors, so a nailed starter
-    this season isn't treated as a bench player just because a few GWs is little raw time."""
+    this season isn't treated as a bench player just because a few GWs is little raw time.
+
+    Recent-role correction: the last-season prior (last_min) dominates the blend early in the
+    season (its weight only reaches 0.7 at 10 completed GWs), so a player who has LOST his
+    starting place keeps inheriting a near-ever-present's reliability minutes from last year -
+    the model then credits a benched player with a starter's share of points. `starts` (this
+    season's starts, from bootstrap) is the truest live-role signal available without per-player
+    element-summary calls. Once there's a real this-season sample we cap reliability minutes by
+    the live start rate, blending the cap in as confidence grows - this only ever pulls a
+    fallen-out player DOWN; a genuine ever-present (start rate ~1) is left untouched."""
     fse_this = (this_min / completed_gws) * 38 if (this_min > 0 and completed_gws) else 0.0
     w = min(0.7, completed_gws / 10.0)
     prior = last_min if last_min > 0 else fse_this
-    return w * fse_this + (1 - w) * prior
+    rel = w * fse_this + (1 - w) * prior
+
+    if starts is not None and completed_gws:
+        live_start_rate = min(1.0, starts / completed_gws)
+        role_cap = live_start_rate * SEASON_GWS * 90  # FSE minutes a player starting at this rate implies
+        conf = min(1.0, completed_gws / ROLE_CONF_GWS)
+        rel = (1 - conf) * rel + conf * min(rel, role_cap)
+    return rel
 
 
 def build_blended_baseline(bootstrap: dict, preseason_baseline: dict | None) -> dict:
@@ -46,7 +64,7 @@ def build_blended_baseline(bootstrap: dict, preseason_baseline: dict | None) -> 
         this_min = _f(cur, "minutes")
         last_min = _f(base, "minutes") if base else 0.0
         use_last = base is not None and last_min >= MIN_LAST_SEASON_MINUTES
-        rel_min = _reliability_minutes(this_min, last_min, completed)
+        rel_min = _reliability_minutes(this_min, last_min, completed, starts=cur.get("starts"))
         pos = cur["element_type"]
 
         el = {"id": cur["id"], "minutes": rel_min}
