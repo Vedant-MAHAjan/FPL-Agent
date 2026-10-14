@@ -34,16 +34,22 @@ def _snapshot(bootstrap):
 
 
 def _resolve_previous(gw):
-    prev = gw - 1
-    if prev < 1:
-        return
-    try:
-        rec = memory.record_outcome(prev)
-        o = rec["outcome"]
-        print(f"  GW{prev} resolved: {o['starting_xi_total']} pts "
-              f"(baseline {o['baseline_starting_xi_total']}, judgment delta {o['judgment_delta']:+d})")
-    except (KeyError, RuntimeError) as e:
-        print(f"  GW{prev} not resolved yet ({type(e).__name__}) - not finalized, or already resolved")
+    # Every unresolved past decision, not just gw-1: a skipped week would otherwise never be
+    # scored and silently drop out of the season comparison.
+    pending = sorted({r["gw"] for r in memory._load_all_decisions() if not r["resolved"] and r["gw"] < gw})
+    if not pending:
+        print("  nothing pending")
+    for prev in pending:
+        try:
+            rec = memory.record_outcome(prev)
+            o = rec["outcome"]
+            print(f"  GW{prev} resolved: {o['starting_xi_total']} pts "
+                  f"(baseline {o['baseline_starting_xi_total']}, judgment delta {o['judgment_delta']:+d})")
+            if o.get("lineup_followed") is False:
+                print(f"  !! GW{prev}: the lineup actually played differed from the recommendation "
+                      f"(real score {o['actual_points']}) - the scoreboard grades the recommendation.")
+        except (KeyError, RuntimeError) as e:
+            print(f"  GW{prev} not resolved yet ({type(e).__name__}) - not finalized")
 
 
 def main():

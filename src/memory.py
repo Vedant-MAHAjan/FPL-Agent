@@ -17,7 +17,7 @@ import json
 import os
 from datetime import datetime, timezone
 
-from fpl_api import get_bootstrap_static, get_event_live
+from fpl_api import get_bootstrap_static, get_entry_picks, get_event_live
 from judgment import VETO
 
 MEMORY_DIR = os.path.join(os.path.dirname(__file__), "..", "data", "memory")
@@ -127,13 +127,19 @@ def log_chip_decision(as_of_gw: int, calls: list) -> dict:
 
 # --- decisions log -------------------------------------------------------------------------
 
-def log_decision(gw: int, horizon: tuple, decision_packet: dict, baseline_result: dict) -> dict:
+def log_decision(gw: int, horizon: tuple, decision_packet: dict, baseline_result: dict,
+                 baseline_points_hit: int = 0) -> dict:
     """Append a new (unresolved) decision record. decision_packet is expected to look like the
     output of judgment.apply_judgment() - captain/starting_xi/bench + judgment_log. baseline_result
     is the RAW optimizer output before judgment touched it (optimizer.optimize_squad's return
     value) - logged alongside so the season-level success metric CLAUDE.md actually asks for
     ("cumulative points/rank vs. a numeric-only baseline") is computable once gameweeks resolve,
     instead of being lost the moment judgment overlays the final call.
+
+    Both bench orders and the baseline plan's points hit are stored too, so record_outcome can
+    score each side the way FPL actually would: auto-subs from that side's own bench, minus the
+    hit that side's transfers cost. Without them a baseline that takes a -4 looks 4 points better
+    than it really was.
     """
     record = {
         "logged_at": datetime.now(timezone.utc).isoformat(),
@@ -146,6 +152,10 @@ def log_decision(gw: int, horizon: tuple, decision_packet: dict, baseline_result
         "baseline_captain_id": baseline_result["captain"]["id"],
         "baseline_captain_name": baseline_result["captain"]["web_name"],
         "baseline_starting_xi_ids": [p["id"] for p in baseline_result["starting_xi"]],
+        "bench_ids": [p["id"] for p in decision_packet.get("bench", [])],
+        "baseline_bench_ids": [p["id"] for p in baseline_result.get("bench", [])],
+        "baseline_vice_captain_id": (baseline_result.get("vice_captain") or {}).get("id"),
+        "baseline_points_hit": baseline_points_hit,
         "judgment_log": decision_packet.get("judgment_log", []),
         "resolved": False,
         "outcome": None,
@@ -176,7 +186,95 @@ def _gameweek_finalized(gw: int) -> bool:
     return bool(event and event["data_checked"])
 
 
-def record_outcome(gw: int, live_points_by_id: dict = None, force: bool = False) -> dict:
+# FPL's minimum outfield formation (overridden from bootstrap element_types when available).
+DEFAULT_MIN_PLAY = {1: 1, 2: 3, 3: 2, 4: 1}
+
+
+def apply_auto_subs(xi_ids: list, bench_ids: list, minutes_by_id: dict, element_type_by_id: dict,
+                    min_play: dict = None) -> tuple:
+    """FPL's automatic substitution, applied to one side of the comparison. Each starter who played
+    0 minutes is replaced, in XI order, by the first bench player (in bench order) who played and
+    whose swap keeps a legal formation; a goalkeeper can only be replaced by a goalkeeper.
+    Returns (final_xi_ids, [(out_id, in_id), ...]).
+    """
+    min_play = min_play or DEFAULT_MIN_PLAY
+    xi = list(xi_ids)
+    used = set()
+    subs = []
+    for out_id in list(xi):
+        if minutes_by_id.get(out_id, 0) > 0:
+            continue
+        out_pos = element_type_by_id[out_id]
+        for in_id in bench_ids:
+            if in_id in used or in_id in xi or minutes_by_id.get(in_id, 0) <= 0:
+                continue
+            in_pos = element_type_by_id[in_id]
+            if (out_pos == 1) != (in_pos == 1):
+                continue
+            after = [in_id if p == out_id else p for p in xi]
+            counts = {pos: 0 for pos in min_play}
+            for p in after:
+                counts[element_type_by_id[p]] += 1
+            if all(counts[pos] >= n for pos, n in min_play.items()):
+                xi = after
+                used.add(in_id)
+                subs.append((out_id, in_id))
+                break
+    return xi, subs
+
+
+def _score_side(xi_ids, bench_ids, captain_id, vice_id, points_hit, pts, minutes_by_id,
+                element_type_by_id, min_play):
+    """Points one side actually banks: XI after auto-subs, captain doubled (armband passes to the
+    vice-captain if the captain didn't play), minus the side's transfer hit. Auto-subs are skipped
+    when minutes or the bench aren't known, and that is reported rather than guessed."""
+    subs = []
+    autosubs_applied = minutes_by_id is not None and bool(bench_ids)
+    if autosubs_applied:
+        xi_ids, subs = apply_auto_subs(xi_ids, bench_ids, minutes_by_id, element_type_by_id, min_play)
+    armband = captain_id
+    if minutes_by_id is not None and minutes_by_id.get(captain_id, 0) == 0 and vice_id is not None \
+            and minutes_by_id.get(vice_id, 0) > 0:
+        armband = vice_id
+    gross = sum(pts(p) for p in xi_ids) + pts(armband)
+    return {"gross": gross, "hit": points_hit, "total": gross - points_hit, "armband_id": armband,
+            "auto_subs": subs, "autosubs_applied": autosubs_applied}
+
+
+def _actual_lineup(gw: int) -> dict | None:
+    """What the manager actually fielded in gw (the recommendation can be ignored or changed in
+    the app). None if the picks can't be fetched."""
+    try:
+        data = get_entry_picks(get_squad_state()["entry_id"], gw)
+    except Exception:
+        return None
+    picks = sorted(data["picks"], key=lambda p: p["position"])
+    hist = data.get("entry_history", {})
+    return {
+        "xi_ids": [p["element"] for p in picks if p["position"] <= 11],
+        "bench_ids": [p["element"] for p in picks if p["position"] > 11],
+        "captain_id": next((p["element"] for p in picks if p["is_captain"]), None),
+        "vice_captain_id": next((p["element"] for p in picks if p["is_vice_captain"]), None),
+        "chip": data.get("active_chip"),
+        "points": hist.get("points"),
+        "points_hit": hist.get("event_transfers_cost"),
+    }
+
+
+def _actual_squad(gw: int) -> list:
+    """The manager's real 15 for gw in pick order (bench last, in bench order), used when a record
+    predates logged bench orders. Empty if the picks can't be fetched."""
+    try:
+        state = get_squad_state()
+        picks = get_entry_picks(state["entry_id"], gw)["picks"]
+    except Exception:
+        return []
+    return [p["element"] for p in sorted(picks, key=lambda p: p["position"])]
+
+
+def record_outcome(gw: int, live_points_by_id: dict = None, force: bool = False,
+                   live_minutes_by_id: dict = None, element_type_by_id: dict = None,
+                   rescore: bool = False) -> dict:
     """Fill in the actual outcome for a previously logged gw. Pulls actual per-player gameweek
     points from the live FPL endpoint unless a live_points_by_id map is passed in directly
     (used for testing, since no gameweek has actually finished yet this season) - passing
@@ -187,9 +285,13 @@ def record_outcome(gw: int, live_points_by_id: dict = None, force: bool = False)
     season-level judgment-vs-baseline comparison), the captain-vs-vice-captain "road not taken",
     and - for any VETO call - the vetoed player's actual points vs. their replacement's, so a
     veto's correctness is checkable, not just asserted.
+
+    Each side is scored as FPL would score it: auto-subs from its own bench, armband to the vice
+    if the captain didn't play, and minus its own transfer hit. rescore=True re-scores an already
+    resolved record (used to backfill after this scoring changed).
     """
     records = _load_all_decisions()
-    matches = [r for r in records if r["gw"] == gw and not r["resolved"]]
+    matches = [r for r in records if r["gw"] == gw and (rescore or not r["resolved"])]
     if not matches:
         raise KeyError(f"no unresolved logged decision found for GW{gw}")
     record = matches[-1]
@@ -203,17 +305,53 @@ def record_outcome(gw: int, live_points_by_id: dict = None, force: bool = False)
             )
         live = get_event_live(gw)
         live_points_by_id = {e["id"]: e["stats"]["total_points"] for e in live["elements"]}
+        live_minutes_by_id = {e["id"]: e["stats"]["minutes"] for e in live["elements"]}
+        actual = _actual_lineup(gw)
+        if actual:
+            record["actual"] = actual
+
+    min_play = None
+    if live_minutes_by_id is not None and element_type_by_id is None:
+        bootstrap = get_bootstrap_static()
+        element_type_by_id = {e["id"]: e["element_type"] for e in bootstrap["elements"]}
+        min_play = {et["id"]: et["squad_min_play"] for et in bootstrap["element_types"]}
 
     def pts(pid):
         return live_points_by_id.get(pid, 0)
 
-    captain_pts = pts(record["captain_id"])
-    starting_xi_pts = sum(pts(pid) for pid in record["starting_xi_ids"])
-    total = starting_xi_pts + captain_pts  # captain's points counted twice
+    # Records logged before bench orders were stored fall back to the manager's real 15 minus that
+    # side's XI (the real lineup can differ from the logged one). The baseline never bought the
+    # judgment side's transfer-ins, so those can't sit on its bench.
+    actual_squad = None
 
+    def bench_for(logged, xi, exclude=()):
+        nonlocal actual_squad
+        if logged:
+            return logged, "logged"
+        if live_minutes_by_id is None:
+            return [], "none"
+        if actual_squad is None:
+            actual_squad = _actual_squad(gw)
+        return [p for p in actual_squad if p not in xi and p not in exclude], "actual_squad_fallback"
+
+    transfer_in = (record.get("transfer") or {}).get("in") or []
+    judgment_ins = {p["id"] for p in (transfer_in if isinstance(transfer_in, list) else [transfer_in])}
+    j_bench, j_src = bench_for(record.get("bench_ids") or record.get("bench_order_ids"),
+                               record["starting_xi_ids"])
+    b_bench, b_src = bench_for(record.get("baseline_bench_ids"), record["baseline_starting_xi_ids"],
+                               exclude=judgment_ins)
+    judgment_hit = (record.get("transfer") or {}).get("points_hit", 0) or 0
+    baseline_hit = record.get("baseline_points_hit", 0) or 0
+
+    j = _score_side(record["starting_xi_ids"], j_bench, record["captain_id"],
+                    record["vice_captain_id"], judgment_hit, pts, live_minutes_by_id,
+                    element_type_by_id, min_play)
+    b = _score_side(record["baseline_starting_xi_ids"], b_bench, record["baseline_captain_id"],
+                    record.get("baseline_vice_captain_id"), baseline_hit, pts, live_minutes_by_id,
+                    element_type_by_id, min_play)
+    captain_pts = pts(record["captain_id"])
     baseline_captain_pts = pts(record["baseline_captain_id"])
-    baseline_starting_xi_pts = sum(pts(pid) for pid in record["baseline_starting_xi_ids"])
-    baseline_total = baseline_starting_xi_pts + baseline_captain_pts
+    total, baseline_total = j["total"], b["total"]
 
     vice_pts = pts(record["vice_captain_id"])
     captain_choice_delta = captain_pts - vice_pts  # >0 = captaining this player beat captaining the VC
@@ -260,7 +398,16 @@ def record_outcome(gw: int, live_points_by_id: dict = None, force: bool = False)
         "baseline_captain_points": baseline_captain_pts,
         "baseline_starting_xi_total": baseline_total,
         "judgment_delta": total - baseline_total,  # >0 = judgment layer beat the numeric-only baseline this week
+        "judgment_scoring": {**j, "bench_source": j_src},
+        "baseline_scoring": {**b, "bench_source": b_src},
         "captain_choice_delta": captain_choice_delta,
+        # What was really played: FPL's own points (after hits), and whether the real lineup
+        # followed the recommendation - the scoreboard above grades the recommendation itself.
+        "actual_points": (record.get("actual") or {}).get("points"),
+        "lineup_followed": (
+            set(record["actual"]["xi_ids"]) == set(record["starting_xi_ids"])
+            and record["actual"]["captain_id"] == record["captain_id"]
+        ) if record.get("actual") else None,
         "judgment_call_outcomes": call_hits,
     }
 
