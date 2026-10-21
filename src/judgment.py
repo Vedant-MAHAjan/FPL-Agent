@@ -6,31 +6,53 @@ is later work; for now a human (or an LLM acting as one, in a single conversatio
 news and produces a judgment call using the structure below. The goal is to prove the layer adds
 real signal the optimizer cannot see, not to restate the optimizer's own numbers as prose.
 
-Action space (per CLAUDE.md's resolution of the open design question - confirm/veto-only by
-default): CONFIRM the pick, ADJUST its confidence/framing without changing squad composition, or
-VETO it outright. A VETO never invents a new pick - it falls back to the optimizer's own
-next-best-ranked alternative already in the squad (bench player in the same position for a
-starting-XI veto; the vice-captain for a captaincy veto). Widening this to let judgment propose
-picks the optimizer never ranked is explicitly deferred, per the open decision in CLAUDE.md.
+Action space (per CLAUDE.md, resolved 2026-09-04): CONFIRM the pick, ADJUST its confidence/
+framing without changing squad composition, VETO it outright (falls back to the optimizer's own
+next-best option already in the squad), or PROPOSE a pick the optimizer didn't rank highly. A
+PROPOSE is recorded here but the squad change itself is made by the transfer step; the numeric
+pick it replaces is still logged as the control.
+
+Guardrail (added after GW6, where two argument-only overrides cost 19 points): an override that
+bets against a projection gap above OVERRIDE_GAP_LIMIT points per gameweek must cite a news source
+(injury, confirmed lineup, rotation). Without one it is flagged unsupported_override - still
+allowed, but loud, and tracked separately in calibration so we can see whether argument-only
+overrides ever earn their keep.
 """
 
 CONFIRM = "CONFIRM"
 ADJUST = "ADJUST"
 VETO = "VETO"
+PROPOSE = "PROPOSE"
 
 HIGH = "High"
 MEDIUM = "Medium"
 LOW = "Low"
 
-VALID_ACTIONS = {CONFIRM, ADJUST, VETO}
+VALID_ACTIONS = {CONFIRM, ADJUST, VETO, PROPOSE}
 VALID_CONFIDENCE = {HIGH, MEDIUM, LOW}
 
+OVERRIDE_GAP_LIMIT = 1.0  # projected points per gameweek
 
-def judgment_call(player_id, player_name, projected_points, action, confidence, rationale, sources=None):
+
+def is_unsupported_override(action, projection_gap_per_gw, sources) -> bool:
+    """True when an override bets against more than OVERRIDE_GAP_LIMIT points per gameweek of
+    projection with no news source behind it."""
+    return (action != CONFIRM and projection_gap_per_gw is not None
+            and projection_gap_per_gw > OVERRIDE_GAP_LIMIT and not sources)
+
+
+def judgment_call(player_id, player_name, projected_points, action, confidence, rationale, sources=None,
+                  projection_gap_per_gw=None):
+    """projection_gap_per_gw: how many projected points per gameweek this call bets against the
+    numeric pick (0 or None for a CONFIRM)."""
     if action not in VALID_ACTIONS:
         raise ValueError(f"invalid action: {action}")
     if confidence not in VALID_CONFIDENCE:
         raise ValueError(f"invalid confidence: {confidence}")
+    unsupported = is_unsupported_override(action, projection_gap_per_gw, sources)
+    if unsupported:
+        print(f"!! UNSUPPORTED OVERRIDE: {action} {player_name} bets against "
+              f"{projection_gap_per_gw:.1f} pts/GW with no news source - argument-only.")
     return {
         "player_id": player_id,
         "player_name": player_name,
@@ -39,6 +61,8 @@ def judgment_call(player_id, player_name, projected_points, action, confidence, 
         "confidence": confidence,
         "rationale": rationale,
         "sources": sources or [],
+        "projection_gap_per_gw": projection_gap_per_gw,
+        "unsupported_override": unsupported,
     }
 
 
@@ -101,6 +125,10 @@ def apply_judgment(squad_result: dict, calls: list) -> dict:
                     )
                 continue
             log.append({**call, "effect": "VETOed (was a bench pick already - no squad change)"})
+            continue
+
+        if call["action"] == PROPOSE:
+            log.append({**call, "effect": "PROPOSED - squad change made by the transfer step, numeric pick kept as control"})
             continue
 
         # CONFIRM / ADJUST never change who's picked, only the confidence/rationale attached.

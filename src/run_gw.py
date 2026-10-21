@@ -67,6 +67,7 @@ def main():
     cal = memory.compute_calibration()
     comp = memory.compute_season_comparison()
     print(f"  calibration by tier: {json.dumps(cal.get('by_confidence', {}))}")
+    print(f"  overrides by support: {json.dumps(cal.get('overrides_by_support', {}))}")
     if comp.get("delta") is not None:
         print(f"  season judgment vs baseline: {comp['delta']:+d} pts "
               f"({comp['judgment_wins']}W / {comp['ties']}T / {comp['baseline_wins']}L)")
