@@ -25,6 +25,7 @@ well-documented FPL rules, just not machine-readable ones.
 
 import glob
 import json
+import math
 import os
 from datetime import date
 
@@ -51,6 +52,7 @@ RATE_BASELINE_FIELDS = (
     "clean_sheets_per_90",
     "defensive_contribution_per_90",
     "goals_conceded_per_90",
+    "expected_goals_conceded_per_90",
     "saves_per_90",
     "bonus",
     "yellow_cards",
@@ -74,12 +76,23 @@ EUROPEAN_COMPETITIONS_2026_27 = {
 
 # stat_name -> (bootstrap field to read, True if it's a raw cumulative count needing /minutes*90
 # to become a rate, False if bootstrap already exposes it as a *_per_90 field).
+# Clean sheets and goals conceded are driven by a conceded-goals rate that blends chance quality
+# (expected goals conceded) with actual goals conceded. Actual goals alone reward luck: a defence
+# that concedes 3 from 6.5 expected looks elite. Clean-sheet odds then come from that rate as
+# P(0 goals) under a Poisson model, rather than from the raw clean-sheet count. Backtest over GW2-6
+# (backtest_clean_sheets.py, 503 keeper/defender games): every blend beat the old model on both
+# clean-sheet Brier score and points error, but weights 0.3-1.0 were within noise of each other,
+# so 0.5 sits in the middle rather than chasing the best decimal.
+XGC_WEIGHT = 0.5
+CS_FROM_CONCEDED_RATE = True
+
 RATE_STAT_FIELDS = {
     "xg90": ("expected_goals_per_90", False),
     "xa90": ("expected_assists_per_90", False),
     "cs90": ("clean_sheets_per_90", False),
     "dc90": ("defensive_contribution_per_90", False),
     "conceded90": ("goals_conceded_per_90", False),
+    "xgc90": ("expected_goals_conceded_per_90", False),
     "saves90": ("saves_per_90", False),
     "bonus90": ("bonus", True),
     "yellow90": ("yellow_cards", True),
@@ -237,6 +250,15 @@ def _starter_factor(player: dict) -> float:
     return max(0.1, min(1.0, minutes / 2500))
 
 
+def _conceded_rate(rates: dict) -> float:
+    """Expected goals conceded per 90 while on the pitch: chance quality blended with actual
+    goals. Falls back to actual goals when no expected-conceded data exists (e.g. an old snapshot
+    without the field), so a missing value can never read as an impregnable defence."""
+    if rates["xgc90"] <= 0:
+        return rates["conceded90"]
+    return XGC_WEIGHT * rates["xgc90"] + (1 - XGC_WEIGHT) * rates["conceded90"]
+
+
 def _base_player_points(player: dict, pos_avg: dict, scoring: dict) -> dict:
     """Per-fixture point breakdown before any fixture-difficulty adjustment (GW-invariant)."""
     pos = player["element_type"]
@@ -254,9 +276,11 @@ def _base_player_points(player: dict, pos_avg: dict, scoring: dict) -> dict:
     minute_frac = expected_minutes / 90
 
     attack_pts = (rates["xg90"] * scoring["goals_scored"][pos] + rates["xa90"] * scoring["assists"]) * minute_frac
-    cs_pts = rates["cs90"] * scoring["clean_sheets"][pos] * minute_frac
+    conceded_rate = _conceded_rate(rates)
+    cs_prob = math.exp(-conceded_rate) if CS_FROM_CONCEDED_RATE else rates["cs90"]
+    cs_pts = cs_prob * scoring["clean_sheets"][pos] * minute_frac
     # goals_conceded is scored per 2 conceded, not per 1
-    conceded_pts = (rates["conceded90"] / 2) * scoring["goals_conceded"][pos] * minute_frac
+    conceded_pts = (conceded_rate / 2) * scoring["goals_conceded"][pos] * minute_frac
     dc_threshold = DC_THRESHOLD.get(pos)
     dc_pts = (
         scoring["defensive_contribution"][pos] * min(1.0, rates["dc90"] / dc_threshold) * minute_frac
