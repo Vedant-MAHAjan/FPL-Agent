@@ -98,3 +98,28 @@ def format_scan(scan, top=5):
             lines.append(f"    {r['name']:13s}{r['team']:5s}£{r['price']:>4.1f} form={r['form']:>4} "
                          f"proj={proj}{fixmark}{susmark} own={r['own_pct']:>4}%{mark}")
     return "\n".join(lines)
+
+
+def template_gap(bootstrap, owned_ids, projections_by_id, min_own=25.0, n=8):
+    """Popular players you don't own, ranked by projection. When a quarter or more of managers own
+    a player who scores, everyone without him falls behind - this is where GW1-6 rank was lost
+    (high-owned scorers never owned), and nothing else in the pipeline surfaced it."""
+    teams = {t["id"]: t["short_name"] for t in bootstrap["teams"]}
+    rows = []
+    for e in bootstrap["elements"]:
+        if e["id"] in owned_ids or float(e["selected_by_percent"]) < min_own or e["status"] != "a":
+            continue
+        p = projections_by_id.get(e["id"])
+        rows.append({"id": e["id"], "name": e["web_name"], "team": teams[e["team"]],
+                     "price": e["now_cost"] / 10, "own_pct": float(e["selected_by_percent"]),
+                     "total_points": e["total_points"], "form": float(e["form"]),
+                     "proj_horizon": round(p["projected_points"], 1) if p else None})
+    rows.sort(key=lambda r: -(r["proj_horizon"] or 0))
+    return rows[:n]
+
+
+def format_template_gap(rows):
+    if not rows:
+        return "    (you own every popular, fit player)"
+    return "\n".join(f"    {r['name']:13s}{r['team']:5s}£{r['price']:>4.1f} own={r['own_pct']:>4}% "
+                     f"season={r['total_points']:>3} form={r['form']:>4} proj={r['proj_horizon']}" for r in rows)

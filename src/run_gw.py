@@ -15,10 +15,10 @@ import memory
 import opponent_strength
 import recent_form
 import squad_sync
-from fpl_api import get_bootstrap_static, get_fixtures
+from fpl_api import get_bootstrap_static, get_element_summary, get_fixtures
 from optimizer import squad_rules_from_bootstrap
 from projections import build_multi_gw_projections, load_preseason_rate_baseline
-from scan import scan_pool, log_scan, format_scan
+from scan import scan_pool, log_scan, format_scan, template_gap, format_template_gap
 from transfer import best_transfer_plan, wildcard_plan
 
 RAW_DIR = os.path.join(os.path.dirname(__file__), "..", "data", "raw")
@@ -31,6 +31,25 @@ def _snapshot(bootstrap):
     with open(path, "w") as f:
         json.dump(bootstrap, f)
     return path
+
+
+def _dead_slots(squad, el):
+    """Owned players who can't help: gone from the game, unavailable, or not playing (0 minutes in
+    2+ of their last 3 gameweeks). Obi (loaned out) and Sessegnon (unused) sat unflagged for weeks."""
+    dead = []
+    for p in squad:
+        e = el.get(p["id"])
+        if e is None:
+            dead.append((p.get("web_name", p["id"]), "left the game"))
+            continue
+        if e["status"] in ("u", "n"):
+            dead.append((e["web_name"], e["news"] or "unavailable"))
+            continue
+        recent = get_element_summary(p["id"])["history"][-3:]
+        zero = sum(1 for h in recent if h["minutes"] == 0)
+        if len(recent) >= 2 and zero >= 2:
+            dead.append((e["web_name"], f"0 minutes in {zero} of last {len(recent)}"))
+    return dead
 
 
 def _resolve_previous(gw):
@@ -89,6 +108,9 @@ def main():
     print(f"  !! FREE TRANSFERS = {free_transfers}  [{src}] -- the API does NOT expose FT; "
           f"CONFIRM against the FPL app before trusting the hit math. Re-run with --ft N to correct.")
     print(f"  {', '.join(el[p['id']]['web_name'] for p in state['squad'])}")
+    dead = _dead_slots(state["squad"], el)
+    for name, why in dead:
+        print(f"  !! DEAD SLOT: {name} - {why}")
 
     print("\n[4] Projections (in-season blend, form-adjusted fixtures) + numeric baseline")
     preseason = load_preseason_rate_baseline(RAW_DIR, snap)
@@ -108,11 +130,12 @@ def main():
     tin = {p["id"] for p in r["squad"]} - owned_ids
     tout = owned_ids - {p["id"] for p in r["squad"]}
     print(f"  numeric recommends {best['num_transfers']} transfer(s) (hit {best['hit']}, net {best['net_score']:.1f}):")
+    own = lambda i: f"{el[i]['web_name']} ({float(el[i]['selected_by_percent']):.0f}%)"  # noqa: E731
     if tout:
-        print(f"    OUT {', '.join(el[i]['web_name'] for i in tout)}  ->  IN {', '.join(el[i]['web_name'] for i in tin)}")
+        print(f"    OUT {', '.join(own(i) for i in tout)}  ->  IN {', '.join(own(i) for i in tin)}")
     else:
         print("    (bank - no transfer beats holding)")
-    print(f"    C {r['captain']['web_name']}  ·  VC {r['vice_captain']['web_name']}")
+    print(f"    C {own(r['captain']['id'])}  ·  VC {own(r['vice_captain']['id'])}")
     wc = wildcard_plan(projections, rules, state, plan)
     print(f"  wildcard check: best squad reachable makes {wc['num_transfers']} change(s), "
           f"{wc['gain_vs_best_regular']:+.1f} pts over the plan above (3-GW horizon)")
@@ -123,6 +146,9 @@ def main():
     scan_path = log_scan(scan, gw)
     print(format_scan(scan))
     print(f"\n  logged -> {os.path.relpath(scan_path)}")
+
+    print("\n[6] Popular players you don't own (25%+ owned, fit, by projection)")
+    print(format_template_gap(template_gap(bootstrap, owned_ids, projections_by_id)))
 
     print(f"\n{'='*72}\n READY FOR JUDGMENT - discuss the pick above. Nothing is logged until we decide.\n{'='*72}")
 
