@@ -16,6 +16,7 @@ Two feed types, both verified live during development (real RSS 2.0 XML, no auth
     reverse-engineering strategy from ownership data - see the discussion that led here.
 """
 
+import re
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
@@ -91,20 +92,29 @@ def fetch_all_feeds(feeds: dict = None, max_age_days: int = MAX_ARTICLE_AGE_DAYS
     return all_items
 
 
-def filter_relevant(items: list, names: list) -> dict:
-    """name -> list of matching articles (case-insensitive substring match on title+summary).
+def _aliases(name: str) -> list:
+    """FPL abbreviates some names with an initial ("E.Le Fée"); articles use the surname."""
+    stripped = re.sub(r"^\w\.\s*", "", name)
+    return [name] if stripped == name else [name, stripped]
 
-    Deliberately simple and transparent rather than clever: a name that doesn't appear verbatim
+
+def filter_relevant(items: list, names: list) -> dict:
+    """name -> list of matching articles (case-insensitive whole-word match on title+summary).
+
+    Whole words, not substrings: a substring match let "King" hit "Kingdom" and "Kingsley", which
+    buried the real team news under junk. Deliberately simple and transparent rather than clever: a name that doesn't appear verbatim
     (a nickname, a surname-only headline that differs from the FPL web_name, etc.) will be
     missed. This is a first-pass filter to narrow down where to look, not a claim of exhaustive
     coverage - the manual judgment step should still sanity-check beyond just this digest for
     anything genuinely decision-critical.
     """
     matches = {name: [] for name in names}
+    patterns = {name: [re.compile(rf"(?<!\w){re.escape(alias)}(?!\w)", re.IGNORECASE) for alias in _aliases(name)]
+                for name in names}
     for item in items:
-        haystack = f"{item['title']} {item['summary']}".lower()
+        haystack = f"{item['title']} {item['summary']}"
         for name in names:
-            if name.lower() in haystack:
+            if any(p.search(haystack) for p in patterns[name]):
                 matches[name].append(item)
     return {name: arts for name, arts in matches.items() if arts}
 
