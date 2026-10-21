@@ -473,8 +473,14 @@ def compute_season_comparison() -> dict:
     gameweek - CLAUDE.md's actual season-level success metric ("cumulative points/rank vs. a
     numeric-only baseline... this is the real test of whether the judgment layer earns its
     complexity"). Needs log_decision() to have been called with a baseline_result each week.
+
+    Weeks with no agent decision (no_agent_decision: the manager played without a discussion) are
+    kept out of the judgment metric - there was no judgment to grade - and reported separately as
+    manager-vs-model.
     """
-    records = [r for r in _load_all_decisions() if r["resolved"]]
+    resolved = [r for r in _load_all_decisions() if r["resolved"]]
+    records = [r for r in resolved if not r.get("no_agent_decision")]
+    unguided = [r for r in resolved if r.get("no_agent_decision")]
     if not records:
         return {"status": "no resolved gameweeks yet"}
 
@@ -482,6 +488,7 @@ def compute_season_comparison() -> dict:
     baseline_total = sum(r["outcome"]["baseline_starting_xi_total"] for r in records)
     return {
         "status": f"{len(records)} resolved gameweek(s)",
+        "no_discussion_weeks": {r["gw"]: r["outcome"]["judgment_delta"] for r in unguided},
         "judgment_total": judgment_total,
         "baseline_total": baseline_total,
         "delta": judgment_total - baseline_total,

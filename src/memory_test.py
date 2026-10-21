@@ -101,6 +101,25 @@ def test_no_minutes_means_no_autosubs_and_says_so():
     assert o["judgment_scoring"]["autosubs_applied"] is False, o
 
 
+def test_no_discussion_week_kept_out_of_judgment_metric():
+    path = tempfile.mktemp(suffix=".jsonl")
+    def rec(gw, delta, **kw):
+        return {"gw": gw, "resolved": True, "outcome": {"starting_xi_total": 50 + delta,
+                "baseline_starting_xi_total": 50, "judgment_delta": delta}, **kw}
+    with open(path, "w") as f:
+        f.write(json.dumps(rec(1, 5)) + "\n")
+        f.write(json.dumps(rec(2, -19, no_agent_decision=True)) + "\n")
+    old = memory.DECISIONS_PATH
+    memory.DECISIONS_PATH = path
+    try:
+        c = memory.compute_season_comparison()
+    finally:
+        memory.DECISIONS_PATH = old
+        os.remove(path)
+    assert c["delta"] == 5 and c["judgment_wins"] == 1, c
+    assert c["no_discussion_weeks"] == {2: -19}, c
+
+
 def main():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:
