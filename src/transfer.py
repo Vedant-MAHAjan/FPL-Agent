@@ -37,7 +37,7 @@ def _departed_player_stub(owned: dict) -> dict:
     }
 
 
-def best_transfer_plan(projections: list, rules: dict, squad_state: dict, free_transfers: int) -> dict:
+def _owned_context(projections: list, squad_state: dict) -> tuple:
     projections_by_id = {p["id"]: p for p in projections}
     # Any owned player missing from projections has departed the game (loan/transfer out, removed
     # upstream). Inject a zero-projection stub so the optimizer can sell them instead of crashing.
@@ -50,6 +50,11 @@ def best_transfer_plan(projections: list, rules: dict, squad_state: dict, free_t
         p["id"]: sell_price(p["purchase_price"], projections_by_id[p["id"]]["now_cost"])
         for p in squad_state["squad"]
     }
+    return projections, owned_ids, sell_price_by_id
+
+
+def best_transfer_plan(projections: list, rules: dict, squad_state: dict, free_transfers: int) -> dict:
+    projections, owned_ids, sell_price_by_id = _owned_context(projections, squad_state)
     bank = squad_state["bank"]
 
     cap = min(MAX_TRANSFERS_CONSIDERED, free_transfers + 3)
@@ -71,6 +76,24 @@ def best_transfer_plan(projections: list, rules: dict, squad_state: dict, free_t
     # sideways move) - explicit tie-break, not just an accident of iteration order.
     best = max(candidates, key=lambda c: (c["net_score"], -c["num_transfers"]))
     return {"best": best, "all_candidates": candidates}
+
+
+def wildcard_plan(projections: list, rules: dict, squad_state: dict, free_transfer_plan: dict) -> dict:
+    """What a wildcard would buy: the best squad reachable with up to 15 free transfers, against
+    the best regular plan (free_transfer_plan = best_transfer_plan's output). gain is the
+    projected-points edge over that plan after its hit - the number the chip decision needs."""
+    projections, owned_ids, sell_price_by_id = _owned_context(projections, squad_state)
+    result = optimize_squad(
+        projections, rules, owned_ids=owned_ids, sell_price_by_id=sell_price_by_id,
+        bank=squad_state["bank"], max_transfers=rules["squad_size"],
+    )
+    regular = free_transfer_plan["best"]
+    return {
+        "result": result,
+        "num_transfers": result["num_transfers"],
+        "gross_points": result["starting_xi_points"],
+        "gain_vs_best_regular": result["starting_xi_points"] - regular["net_score"],
+    }
 
 
 def next_best_targets(projections: list, squad_state: dict, n: int = 8) -> list:

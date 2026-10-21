@@ -19,7 +19,7 @@ from fpl_api import get_bootstrap_static, get_fixtures
 from optimizer import squad_rules_from_bootstrap
 from projections import build_multi_gw_projections, load_preseason_rate_baseline
 from scan import scan_pool, log_scan, format_scan
-from transfer import best_transfer_plan
+from transfer import best_transfer_plan, wildcard_plan
 
 RAW_DIR = os.path.join(os.path.dirname(__file__), "..", "data", "raw")
 DEFAULT_ENTRY = 2360640
@@ -112,6 +112,9 @@ def main():
     else:
         print("    (bank - no transfer beats holding)")
     print(f"    C {r['captain']['web_name']}  ·  VC {r['vice_captain']['web_name']}")
+    wc = wildcard_plan(projections, rules, state, plan)
+    print(f"  wildcard check: best squad reachable makes {wc['num_transfers']} change(s), "
+          f"{wc['gain_vs_best_regular']:+.1f} pts over the plan above (3-GW horizon)")
 
     print("\n[5] Full-pool scan (whole pool, nailed, by fixture-adjusted projection)")
     projections_by_id = {p["id"]: p for p in projections}

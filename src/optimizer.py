@@ -51,7 +51,11 @@ def optimize_squad(
     sell_price_by_id: dict = None,
     bank: int = None,
     transfer_count: int = None,
+    max_transfers: int = None,
 ) -> dict:
+    """transfer_count forces EXACTLY that many transfers (used to sweep hit costs per count);
+    max_transfers allows UP TO that many (a wildcard is max_transfers=15 - forcing exactly 15
+    would sell good players just to hit the count)."""
     players = projections
     idx = range(len(players))
 
@@ -100,8 +104,11 @@ def optimize_squad(
         owned_sell_total = sum(sell_price_by_id[pid] for pid in owned_ids)
         prob += spend <= bank + owned_sell_total - sell_revenue
 
+        transfers_made = pulp.lpSum(1 - squad[i] for i in idx if players[i]["id"] in owned_ids)
         if transfer_count is not None:
-            prob += pulp.lpSum(1 - squad[i] for i in idx if players[i]["id"] in owned_ids) == transfer_count
+            prob += transfers_made == transfer_count
+        if max_transfers is not None:
+            prob += transfers_made <= max_transfers
 
     for t in teams:
         prob += pulp.lpSum(squad[i] for i in idx if players[i]["team"] == t) <= rules["team_limit"]
