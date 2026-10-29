@@ -11,8 +11,9 @@ The prior is last season's rate for established players, and the position-averag
 with no reliable last-season PL sample (promoted/new signings) - so a hot 3-game sample from a
 newly promoted defender is regressed toward league average, not trusted at face value.
 
-(Game-by-game recency weighting via element-summary is a later refinement; the cumulative blend is
-the high-value core.)
+Recent form: attacking rates (xG, xA per 90) can additionally lean toward the last RECENT_GWS
+gameweeks, read from the per-gameweek live endpoint (one call per gameweek, not per player). How much
+weight recent form deserves is an empirical question - see backtest_recent_form.py.
 """
 from projections import RATE_STAT_FIELDS, _f, _player_rate, compute_position_averages
 
@@ -20,6 +21,12 @@ PRIOR_MINUTES = 600          # strength of the prior in minutes; regresses small
 MIN_LAST_SEASON_MINUTES = 300  # below this, last season isn't a reliable prior -> use position average
 SEASON_GWS = 38
 ROLE_CONF_GWS = 6.0          # this-season GWs after which the live start-rate is fully trusted as the role signal
+RECENT_GWS = 4               # window for recent attacking form
+# Share of the attacking rate taken from the recent window. Backtest over GW5-8 (backtest_recent_form.py,
+# 433 attacker games): any weight above 0 made points error slightly worse (2.510 -> 2.540 at 1.0) with no
+# real ranking gain, so recent form stays off. run_gw doesn't fetch the recent window while this is 0.
+RECENT_WEIGHT = 0.0
+RECENT_FULL_MINUTES = 360    # recent minutes needed for the full recent weight; fewer minutes, less weight
 
 
 def completed_gameweeks(bootstrap: dict) -> int:
@@ -51,9 +58,25 @@ def _reliability_minutes(this_min, last_min, completed_gws, starts=None):
     return rel
 
 
-def build_blended_baseline(bootstrap: dict, preseason_baseline: dict | None) -> dict:
+def recent_attacking_rates(event_lives: list) -> dict:
+    """id -> {'xg90', 'xa90', 'minutes'} summed over the given event/{gw}/live payloads."""
+    acc = {}
+    for live in event_lives:
+        for e in live["elements"]:
+            st = e["stats"]
+            a = acc.setdefault(e["id"], {"xg": 0.0, "xa": 0.0, "minutes": 0})
+            a["xg"] += float(st["expected_goals"])
+            a["xa"] += float(st["expected_assists"])
+            a["minutes"] += st["minutes"]
+    return {pid: {"xg90": a["xg"] / a["minutes"] * 90, "xa90": a["xa"] / a["minutes"] * 90, "minutes": a["minutes"]}
+            for pid, a in acc.items() if a["minutes"] > 0}
+
+
+def build_blended_baseline(bootstrap: dict, preseason_baseline: dict | None, recent: dict = None) -> dict:
     """Return {'elements': [...]} whose rate fields are the this-season / prior blend, to be passed
-    as `rate_baseline` to build_multi_gw_projections."""
+    as `rate_baseline` to build_multi_gw_projections. `recent` (from recent_attacking_rates) tilts
+    attacking rates toward recent form by RECENT_WEIGHT, scaled down for players with few recent
+    minutes."""
     completed = max(1, completed_gameweeks(bootstrap))
     base_by_id = {p["id"]: p for p in preseason_baseline["elements"]} if preseason_baseline else {}
     pos_avg = compute_position_averages(bootstrap["elements"])  # this-season league averages, per position
@@ -80,6 +103,11 @@ def build_blended_baseline(bootstrap: dict, preseason_baseline: dict | None) -> 
             el[field] = (blended * rel_min / 90) if (is_raw and rel_min > 0) else blended
         # remaining RATE_BASELINE_FIELDS: unused by scoring, kept sane (total_points must be non-zero
         # for anyone who has played so the new-to-PL low-confidence branch doesn't misfire)
+        r = (recent or {}).get(cur["id"])
+        if r and RECENT_WEIGHT > 0:
+            w = RECENT_WEIGHT * min(1.0, r["minutes"] / RECENT_FULL_MINUTES)
+            el["expected_goals_per_90"] = (1 - w) * el["expected_goals_per_90"] + w * r["xg90"]
+            el["expected_assists_per_90"] = (1 - w) * el["expected_assists_per_90"] + w * r["xa90"]
         el["total_points"] = _f(cur, "total_points") + (_f(base, "total_points") if base else 0.0)
         el["expected_goals"] = _f(cur, "expected_goals")
         el["expected_assists"] = _f(cur, "expected_assists")
