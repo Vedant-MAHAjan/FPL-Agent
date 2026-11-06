@@ -45,11 +45,19 @@ def _dead_slots(squad, el):
         if e["status"] in ("u", "n"):
             dead.append((e["web_name"], e["news"] or "unavailable"))
             continue
-        recent = get_element_summary(p["id"])["history"][-3:]
-        zero = sum(1 for h in recent if h["minutes"] == 0)
-        if len(recent) >= 2 and zero >= 2:
-            dead.append((e["web_name"], f"0 minutes in {zero} of last {len(recent)}"))
+        reason = unused_reason([h["minutes"] for h in get_element_summary(p["id"])["history"][-3:]])
+        if reason:
+            dead.append((e["web_name"], reason))
     return dead
+
+
+def unused_reason(recent_minutes):
+    """Why a player counts as unused from his last 3 gameweeks' minutes, or None. Someone who played
+    in the latest gameweek is back in the side, whatever the weeks before (Gakpo, after injury)."""
+    zero = sum(1 for m in recent_minutes if m == 0)
+    if len(recent_minutes) < 2 or zero < 2 or recent_minutes[-1] > 0:
+        return None
+    return f"0 minutes in {zero} of last {len(recent_minutes)}"
 
 
 def _resolve_previous(gw):
