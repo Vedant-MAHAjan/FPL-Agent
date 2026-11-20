@@ -52,10 +52,12 @@ def optimize_squad(
     bank: int = None,
     transfer_count: int = None,
     max_transfers: int = None,
+    must_include: set = None,
 ) -> dict:
     """transfer_count forces EXACTLY that many transfers (used to sweep hit costs per count);
     max_transfers allows UP TO that many (a wildcard is max_transfers=15 - forcing exactly 15
-    would sell good players just to hit the count)."""
+    would sell good players just to hit the count). must_include forces those player ids into the
+    squad (e.g. a template core); the rest is optimized around them."""
     players = projections
     idx = range(len(players))
 
@@ -90,6 +92,9 @@ def optimize_squad(
     )
 
     prob += pulp.lpSum(squad[i] for i in idx) == rules["squad_size"]
+    for i in idx:
+        if must_include and players[i]["id"] in must_include:
+            prob += squad[i] == 1
 
     if owned_ids is None:
         prob += pulp.lpSum(players[i]["now_cost"] * squad[i] for i in idx) <= rules["budget"]

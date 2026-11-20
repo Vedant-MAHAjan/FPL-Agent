@@ -44,3 +44,11 @@ def get_element_summary(element_id: int) -> dict:
     resp = requests.get(f"{BASE_URL}/element-summary/{element_id}/", timeout=TIMEOUT)
     resp.raise_for_status()
     return resp.json()
+
+
+def get_classic_league_standings(league_id: int, page: int = 1) -> dict:
+    """One page (50 entries) of a classic league's standings. League 314 is the overall league."""
+    resp = requests.get(f"{BASE_URL}/leagues-classic/{league_id}/standings/",
+                        params={"page_standings": page}, timeout=TIMEOUT)
+    resp.raise_for_status()
+    return resp.json()
