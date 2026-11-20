@@ -97,7 +97,7 @@ def record_chip_used(chip_key: str, gw: int, note: str = ""):
         raise ValueError(f"{chip_key} already used in GW{state['chips'][chip_key]['used_gw']}")
     state["chips"][chip_key]["available"] = False
     state["chips"][chip_key]["used_gw"] = gw
-    state["history"].append({"gw": gw, "event": f"chip_used:{chip_key}", "note": note,
+    state.setdefault("history", []).append({"gw": gw, "event": f"chip_used:{chip_key}", "note": note,
                               "timestamp": datetime.now(timezone.utc).isoformat()})
     _save_squad_state(state)
     return state
