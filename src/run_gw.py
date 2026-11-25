@@ -127,8 +127,9 @@ def main():
 
     print("\n[4] Projections (in-season blend, form-adjusted fixtures) + numeric baseline")
     preseason = load_preseason_rate_baseline(RAW_DIR, snap)
-    blended = recent_form.build_blended_baseline(bootstrap, preseason)
     completed = recent_form.completed_gameweeks(bootstrap)
+    blended = recent_form.build_blended_baseline(bootstrap, preseason,
+                                                 recent_mins=recent_form.fetch_recent_minutes(completed))
     ratings = opponent_strength.build_team_ratings(fixtures, bootstrap)
     difficulty_fn = opponent_strength.make_difficulty_fn(ratings, completed)
     print(f"  projections: this-season rates blended vs last-season prior ({completed} GWs live); "

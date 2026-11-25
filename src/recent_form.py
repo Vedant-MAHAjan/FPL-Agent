@@ -27,6 +27,13 @@ RECENT_GWS = 4               # window for recent attacking form
 # real ranking gain, so recent form stays off. run_gw doesn't fetch the recent window while this is 0.
 RECENT_WEIGHT = 0.0
 RECENT_FULL_MINUTES = 360    # recent minutes needed for the full recent weight; fewer minutes, less weight
+# Share of reliability minutes (-> expected minutes) taken from the last RECENT_MINUTES_GWS gameweeks'
+# actual minutes, so a player dropping out of the side is projected lower sooner. backtest_minutes.py
+# over GW4-11 (2,538 player-weeks, 28% of them 0-minute): 0.25 lifted ranking accuracy 0.461 -> 0.480
+# (better than 0 in 100% of 1,000 paired resamples) and cut error on benched players, with overall
+# error flat; higher weights ranked worse.
+RECENT_MINUTES_WEIGHT = 0.25
+RECENT_MINUTES_GWS = 3
 
 
 def completed_gameweeks(bootstrap: dict) -> int:
@@ -72,7 +79,25 @@ def recent_attacking_rates(event_lives: list) -> dict:
             for pid, a in acc.items() if a["minutes"] > 0}
 
 
-def build_blended_baseline(bootstrap: dict, preseason_baseline: dict | None, recent: dict = None) -> dict:
+def recent_minutes(event_lives: list) -> dict:
+    """id -> minutes played over the given event/{gw}/live payloads, zeros included (a player who
+    sat out every game is exactly the case that matters here)."""
+    acc = {}
+    for live in event_lives:
+        for e in live["elements"]:
+            acc[e["id"]] = acc.get(e["id"], 0) + e["stats"]["minutes"]
+    return acc
+
+
+def fetch_recent_minutes(completed_gws: int, window: int = RECENT_MINUTES_GWS) -> dict:
+    """recent_minutes over the last `window` finished gameweeks, straight from the live endpoint."""
+    from fpl_api import get_event_live
+    first = max(1, completed_gws - window + 1)
+    return recent_minutes([get_event_live(gw) for gw in range(first, completed_gws + 1)])
+
+
+def build_blended_baseline(bootstrap: dict, preseason_baseline: dict | None, recent: dict = None,
+                           recent_mins: dict = None, recent_gws: int = None) -> dict:
     """Return {'elements': [...]} whose rate fields are the this-season / prior blend, to be passed
     as `rate_baseline` to build_multi_gw_projections. `recent` (from recent_attacking_rates) tilts
     attacking rates toward recent form by RECENT_WEIGHT, scaled down for players with few recent
@@ -90,6 +115,10 @@ def build_blended_baseline(bootstrap: dict, preseason_baseline: dict | None, rec
         rel_min = _reliability_minutes(this_min, last_min, completed, starts=cur.get("starts"))
         pos = cur["element_type"]
 
+        if recent_mins is not None and RECENT_MINUTES_WEIGHT > 0 and cur["id"] in recent_mins:
+            window = recent_gws or RECENT_MINUTES_GWS
+            recent_fse = recent_mins[cur["id"]] / (90 * window) * SEASON_GWS * 90  # full-season equivalent
+            rel_min = (1 - RECENT_MINUTES_WEIGHT) * rel_min + RECENT_MINUTES_WEIGHT * recent_fse
         el = {"id": cur["id"], "minutes": rel_min}
         for stat, (field, is_raw) in RATE_STAT_FIELDS.items():
             this_rate = _player_rate(cur, field, is_raw, this_min)

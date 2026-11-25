@@ -108,8 +108,9 @@ def build_drafts(gw: int, entry: int = DEFAULT_ENTRY) -> dict:
         json.dump(bootstrap, f)
 
     state = squad_sync.sync_squad_state(entry)
-    blended = recent_form.build_blended_baseline(bootstrap, load_preseason_rate_baseline(RAW_DIR, snap))
     completed = recent_form.completed_gameweeks(bootstrap)
+    blended = recent_form.build_blended_baseline(bootstrap, load_preseason_rate_baseline(RAW_DIR, snap),
+                                                 recent_mins=recent_form.fetch_recent_minutes(completed))
     diff = opponent_strength.make_difficulty_fn(opponent_strength.build_team_ratings(fixtures, bootstrap), completed)
     p3 = build_multi_gw_projections(bootstrap, fixtures, start_gw=gw, num_gws=3, rate_baseline=blended, difficulty_fn=diff)
     p6 = build_multi_gw_projections(bootstrap, fixtures, start_gw=gw, num_gws=6, rate_baseline=blended, difficulty_fn=diff)

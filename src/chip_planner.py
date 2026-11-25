@@ -172,9 +172,10 @@ def main():
     snap = os.path.join(raw, f"bootstrap_static_{date.today().isoformat()}.json")
     with open(snap, "w") as f:
         json.dump(bootstrap, f)
-    blended = recent_form.build_blended_baseline(bootstrap, load_preseason_rate_baseline(raw, snap))
-    diff = opponent_strength.make_difficulty_fn(opponent_strength.build_team_ratings(fixtures, bootstrap),
-                                                recent_form.completed_gameweeks(bootstrap))
+    completed = recent_form.completed_gameweeks(bootstrap)
+    blended = recent_form.build_blended_baseline(bootstrap, load_preseason_rate_baseline(raw, snap),
+                                                 recent_mins=recent_form.fetch_recent_minutes(completed))
+    diff = opponent_strength.make_difficulty_fn(opponent_strength.build_team_ratings(fixtures, bootstrap), completed)
     proj = build_multi_gw_projections(bootstrap, fixtures, start_gw=args.gw, num_gws=len(gws),
                                       rate_baseline=blended, difficulty_fn=diff)
     state = memory.get_squad_state()
