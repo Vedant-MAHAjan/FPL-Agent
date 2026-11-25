@@ -68,6 +68,32 @@ FPL API — no login needed, just that ID.
 Every 3–4 gameweeks a separate pass looks further ahead at chip timing (Wildcard / Free Hit /
 Bench Boost / Triple Captain) against fixture swings and your remaining chip inventory.
 
+## Setup and running
+
+Needs **Python 3.10+** (the code uses `X | None` type hints). Use a virtual environment so the
+solver (`pulp`) is always available - a bare system `python3` usually won't have it.
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+```
+
+Everything runs from the repo root with the venv's Python. Personal state (squad, decision log,
+data snapshots) is written to `data/`, which is git-ignored.
+
+| Command | What it does |
+|---|---|
+| `.venv/bin/python src/run_gw.py 12` | The weekly pipeline for GW12: scores past weeks, syncs the squad, projects, finds the best transfers, scans the pool |
+| `.venv/bin/python src/wildcard.py 12` | Wildcard drafts scored against not playing it |
+| `.venv/bin/python src/chip_planner.py 12` | Projected value of each chip in every gameweek until they expire |
+| `.venv/bin/python src/news_digest.py` | Hard news (injuries, suspensions) for the squad and transfer targets |
+| `.venv/bin/python src/ghost.py build 11` | Pick the top-10% manager panel used as a copy-the-leaders control |
+| `.venv/bin/python src/backtest_*.py` | Re-run a backtest (clean sheets, recent form, minutes, captain choice) |
+
+Tests are plain scripts with no network access - run any `src/*_test.py`, for example
+`.venv/bin/python src/memory_test.py`. (`chip_planner_test.py` and `transfer_test.py` are live dry
+runs against the API, not unit tests.)
+
 ## Extra signals it checks that are easy to miss by hand
 
 - **Set-piece duty** — penalties/corners/free-kicks, surfaced when it changes.
