@@ -16,6 +16,7 @@ import memory
 import opponent_strength
 import recent_form
 import squad_sync
+from captaincy import CAPTAIN_TIE, captain_table, choose_captain
 from fpl_api import get_bootstrap_static, get_element_summary, get_fixtures
 from optimizer import squad_rules_from_bootstrap
 from projections import build_multi_gw_projections, load_preseason_rate_baseline
@@ -150,6 +151,14 @@ def main():
     else:
         print("    (bank - no transfer beats holding)")
     print(f"    C {own(r['captain']['id'])}  ·  VC {own(r['vice_captain']['id'])}")
+    ownership = {i: float(e["selected_by_percent"]) for i, e in el.items()}
+    options = captain_table(r["starting_xi"], ownership)
+    pick = choose_captain(options)
+    print("    captain options (3-GW projection, ownership): " +
+          ", ".join(f"{o['web_name']} {o['projected_points']:.1f} ({o['ownership']:.0f}%)" for o in options))
+    if pick["id"] != r["captain"]["id"]:
+        print(f"    -> captain {pick['web_name']}: within {CAPTAIN_TIE} of the top projection and lower-owned "
+              f"(same expected points, more upside for climbing rank)")
     wc = wildcard_plan(projections, rules, state, plan)
     print(f"  wildcard check: best squad reachable makes {wc['num_transfers']} change(s), "
           f"{wc['gain_vs_best_regular']:+.1f} pts over the plan above (3-GW horizon)")
