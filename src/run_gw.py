@@ -11,6 +11,7 @@ import json
 import os
 from datetime import date
 
+import ghost
 import memory
 import opponent_strength
 import recent_form
@@ -72,6 +73,10 @@ def _resolve_previous(gw):
             o = rec["outcome"]
             print(f"  GW{prev} resolved: {o['starting_xi_total']} pts "
                   f"(baseline {o['baseline_starting_xi_total']}, judgment delta {o['judgment_delta']:+d})")
+            ghost_mean, ghost_n = ghost.score(prev)
+            if ghost_mean is not None:
+                memory.annotate_outcome(prev, "ghost_top10", ghost_mean)
+                print(f"  GW{prev} ghost panel (copying a top-10% manager): {ghost_mean} avg over {ghost_n}")
             if o.get("lineup_followed") is False:
                 print(f"  !! GW{prev}: the lineup actually played differed from the recommendation "
                       f"(real score {o['actual_points']}) - the scoreboard grades the recommendation.")

@@ -422,6 +422,17 @@ def record_outcome(gw: int, live_points_by_id: dict = None, force: bool = False,
     return record
 
 
+def annotate_outcome(gw: int, key: str, value) -> None:
+    """Add one field to a resolved gameweek's outcome (e.g. the ghost panel's score)."""
+    records = _load_all_decisions()
+    for r in records:
+        if r["gw"] == gw and r.get("outcome"):
+            r["outcome"][key] = value
+    with open(DECISIONS_PATH, "w") as f:
+        for r in records:
+            f.write(json.dumps(r) + "\n")
+
+
 def compute_calibration() -> dict:
     """Hit-rate per confidence tier across every resolved judgment call so far: did the picked
     player's actual points meet/beat their projection AT THE TIME OF THE CALL? This is the
@@ -489,6 +500,11 @@ def compute_season_comparison() -> dict:
     return {
         "status": f"{len(records)} resolved gameweek(s)",
         "no_discussion_weeks": {r["gw"]: r["outcome"]["judgment_delta"] for r in unguided},
+        # Weeks with a ghost-panel score: you (real points) vs the model vs copying a top-10% manager.
+        "ghost_weeks": {r["gw"]: {"you": r["outcome"].get("actual_points"),
+                                  "model": r["outcome"]["baseline_starting_xi_total"],
+                                  "ghost_top10": r["outcome"]["ghost_top10"]}
+                        for r in resolved if r["outcome"].get("ghost_top10") is not None},
         "judgment_total": judgment_total,
         "baseline_total": baseline_total,
         "delta": judgment_total - baseline_total,
