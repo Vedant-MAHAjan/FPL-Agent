@@ -18,7 +18,7 @@ import os
 from datetime import datetime, timezone
 
 from fpl_api import get_bootstrap_static, get_entry_picks, get_event_live
-from judgment import VETO
+from judgment import SELL, VETO
 
 MEMORY_DIR = os.path.join(os.path.dirname(__file__), "..", "data", "memory")
 DECISIONS_PATH = os.path.join(MEMORY_DIR, "decisions.jsonl")
@@ -381,6 +381,11 @@ def record_outcome(gw: int, live_points_by_id: dict = None, force: bool = False,
             "horizon_gws": n_gws,
             "actual_points": actual,
             "beat_projection": (actual >= projected_per_gw) if projected_per_gw is not None else None,
+            # Was the call right? Backing a player is right if he reaches his projection; selling or
+            # vetoing him is right if he scores no more than it (an injured sale projected 0 that
+            # then scores 0 was right).
+            "right": (None if projected_per_gw is None else
+                      (actual <= projected_per_gw) if call["action"] in (SELL, VETO) else (actual >= projected_per_gw)),
             # Explicit flag wins: a cited opinion piece is a source but not hard news.
             "news_backed": call.get("news_backed", bool(call.get("sources")) and not call.get("unsupported_override")),
             "unsupported_override": call.get("unsupported_override", False),
@@ -463,14 +468,17 @@ def compute_calibration() -> dict:
         entry = {"n": len(calls), "avg_actual_points": round(avg_points, 2)}
         if scored:
             entry["beat_projection_rate"] = round(sum(c["beat_projection"] for c in scored) / len(scored), 3)
+        judged = [c for c in calls if c.get("right") is not None]
+        if judged:
+            entry["right_rate"] = round(sum(c["right"] for c in judged) / len(judged), 3)
         summary[conf] = entry
     # Overrides only (anything but CONFIRM), split by whether a news source backed them - the
     # question after GW6 is whether argument-only overrides ever beat the model.
     overrides = {"news_backed": [], "argument_only": []}
     for r in records:
         for o in r["outcome"]["judgment_call_outcomes"]:
-            if o["action"] != "CONFIRM" and o["beat_projection"] is not None:
-                # A VETO is right when the vetoed player does NOT reach his projection.
+            # Sells follow the model or hard news, so they aren't overrides of it.
+            if o["action"] not in ("CONFIRM", SELL) and o["beat_projection"] is not None:
                 right = (not o["beat_projection"]) if o["action"] == VETO else o["beat_projection"]
                 overrides["news_backed" if o.get("news_backed") else "argument_only"].append(right)
     by_support = {k: {"n": len(v), "right_rate": round(sum(v) / len(v), 3) if v else None}

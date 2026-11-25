@@ -120,6 +120,16 @@ def test_no_discussion_week_kept_out_of_judgment_metric():
     assert c["no_discussion_weeks"] == {2: -19}, c
 
 
+def test_a_sell_is_right_when_the_player_undershoots():
+    rec = _record(judgment_log=[{"player_id": 30, "player_name": "sold", "projected_points": 15.0,
+                                 "action": "SELL", "confidence": "High"},
+                                {"player_id": 31, "player_name": "kept", "projected_points": 15.0,
+                                 "action": "CONFIRM", "confidence": "High"}])
+    points = {**{i: 2 for i in POS}, 30: 0, 31: 0}
+    calls = {c["player_id"]: c for c in _resolve(rec, points, ALL_PLAYED)["judgment_call_outcomes"]}
+    assert calls[30]["right"] is True and calls[31]["right"] is False, calls
+
+
 def main():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:

@@ -23,12 +23,13 @@ CONFIRM = "CONFIRM"
 ADJUST = "ADJUST"
 VETO = "VETO"
 PROPOSE = "PROPOSE"
+SELL = "SELL"  # selling a player: right when he then falls short of his projection
 
 HIGH = "High"
 MEDIUM = "Medium"
 LOW = "Low"
 
-VALID_ACTIONS = {CONFIRM, ADJUST, VETO, PROPOSE}
+VALID_ACTIONS = {CONFIRM, ADJUST, VETO, PROPOSE, SELL}
 VALID_CONFIDENCE = {HIGH, MEDIUM, LOW}
 
 OVERRIDE_GAP_LIMIT = 1.0  # projected points per gameweek
@@ -125,6 +126,10 @@ def apply_judgment(squad_result: dict, calls: list) -> dict:
                     )
                 continue
             log.append({**call, "effect": "VETOed (was a bench pick already - no squad change)"})
+            continue
+
+        if call["action"] == SELL:
+            log.append({**call, "effect": "SELL - made by the transfer step; right if he undershoots his projection"})
             continue
 
         if call["action"] == PROPOSE:
