@@ -53,6 +53,7 @@ def optimize_squad(
     transfer_count: int = None,
     max_transfers: int = None,
     must_include: set = None,
+    max_shared: tuple = None,
 ) -> dict:
     """transfer_count forces EXACTLY that many transfers (used to sweep hit costs per count);
     max_transfers allows UP TO that many (a wildcard is max_transfers=15 - forcing exactly 15
@@ -95,6 +96,9 @@ def optimize_squad(
     for i in idx:
         if must_include and players[i]["id"] in must_include:
             prob += squad[i] == 1
+    if max_shared:
+        shared_ids, k = max_shared
+        prob += pulp.lpSum(squad[i] for i in idx if players[i]["id"] in shared_ids) <= k
 
     if owned_ids is None:
         prob += pulp.lpSum(players[i]["now_cost"] * squad[i] for i in idx) <= rules["budget"]

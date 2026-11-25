@@ -7,7 +7,9 @@ transfers. Recent form (last 3 gameweeks' points and xGI) is shown beside every 
 weighted into projections: the recent-form backtest found weighting it made predictions worse.
 
   A. best squad over the next 3 gameweeks
-  B. best squad over the next 6 gameweeks (scored on both)
+  B. best real alternative: the best 3-gameweek squad sharing at most MAX_SHARED players with A, so
+     there's always a different option and its cost is visible (a 6-gameweek draft used to sit
+     here, but every draft already shows a 6-gameweek score and it often came out identical to A)
   C. top-100 core: players owned by most of the current top 100, the rest optimized around them
 
     python src/wildcard.py 11
@@ -33,6 +35,7 @@ RAW_DIR = os.path.join(os.path.dirname(__file__), "..", "data", "raw")
 PROCESSED_DIR = os.path.join(os.path.dirname(__file__), "..", "data", "processed")
 DEFAULT_ENTRY = 2360640
 OVERALL_LEAGUE = 314
+MAX_SHARED = 10       # draft B may keep at most this many of draft A's 15
 CORE_OWNERSHIP = 0.5   # a "top-100 core" player is owned by at least half of the top 100
 FORM_GWS = 3
 
@@ -126,16 +129,17 @@ def build_drafts(gw: int, entry: int = DEFAULT_ENTRY) -> dict:
         cost = sum(sell[i] if i in owned_ids else next(p["now_cost"] for p in p3 if p["id"] == i) for i in squad_ids)
         return budget - cost
 
-    def wildcard(projections, must=None):
+    def wildcard(projections, must=None, max_shared=None):
         r = optimize_squad(projections, rules, owned_ids=owned_ids, sell_price_by_id=sell, bank=state["bank"],
-                           max_transfers=rules["squad_size"], must_include=must)
+                           max_transfers=rules["squad_size"], must_include=must, max_shared=max_shared)
         return {p["id"] for p in r["squad"]}
 
     drafts = []
     a = wildcard(p3)
     drafts.append(_draft_summary("A. best over next 3 GWs", a, owned_ids, p3, p6, rules, bank_after(a), form, top100))
-    b = wildcard(p6)
-    drafts.append(_draft_summary("B. best over next 6 GWs", b, owned_ids, p3, p6, rules, bank_after(b), form, top100))
+    b = wildcard(p3, max_shared=(a, MAX_SHARED))
+    drafts.append(_draft_summary(f"B. best alternative (shares at most {MAX_SHARED} with A)", b, owned_ids, p3, p6,
+                                 rules, bank_after(b), form, top100))
 
     # Top-100 core, most-owned first; drop the least-owned until the forced core is affordable/legal.
     core = sorted((pid for pid, share in top100.items() if share >= CORE_OWNERSHIP), key=lambda pid: -top100[pid])

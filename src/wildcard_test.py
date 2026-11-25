@@ -31,6 +31,13 @@ def test_must_include_forces_players_in():
     assert weakest["id"] in {p["id"] for p in res["squad"]}
 
 
+def test_max_shared_forces_a_different_squad():
+    players = _pool()
+    first = {p["id"] for p in optimize_squad(players, RULES)["squad"]}
+    second = {p["id"] for p in optimize_squad(players, RULES, max_shared=(first, 10))["squad"]}
+    assert len(first & second) <= 10
+
+
 def main():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:
