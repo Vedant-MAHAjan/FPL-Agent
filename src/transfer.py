@@ -8,6 +8,11 @@ from optimizer import optimize_squad
 
 HIT_COST = 4
 MAX_TRANSFERS_CONSIDERED = 5  # beyond this you're better off wildcarding, not stacking hits
+# Projected points (over the 3-GW horizon) an extra banked free transfer is worth next week:
+# best 2-FT plan minus best 1-FT plan on our real squads, GW4-12 snapshots - mean 2.1, median 2.2.
+# A move must beat this to be worth spending a free transfer that would otherwise roll over.
+FT_ROLL_VALUE = 2.0
+FT_CAP = 5
 
 
 def sell_price(purchase_price: int, now_cost: int) -> int:
@@ -69,13 +74,22 @@ def best_transfer_plan(projections: list, rules: dict, squad_state: dict, free_t
             "hit": hit,
             "gross_points": result["starting_xi_points"],
             "net_score": result["starting_xi_points"] - hit,
+            "roll_credit": roll_credit(free_transfers, t),
             "result": result,
         })
+    return {"best": choose_plan(candidates), "all_candidates": candidates}
 
-    # Prefer fewer transfers on a tie (bank the free transfer rather than making a pointless
-    # sideways move) - explicit tie-break, not just an accident of iteration order.
-    best = max(candidates, key=lambda c: (c["net_score"], -c["num_transfers"]))
-    return {"best": best, "all_candidates": candidates}
+
+def roll_credit(free_transfers: int, used: int, ft_value: float = FT_ROLL_VALUE, cap: int = FT_CAP) -> float:
+    """Value of the free transfers this plan leaves to roll into next week, beyond the 1 you'd get anyway."""
+    carried = min(cap, max(0, free_transfers - used) + 1)
+    return ft_value * (carried - 1)
+
+
+def choose_plan(candidates: list) -> dict:
+    """Highest net score plus the value of any free transfers left to roll. Ties go to fewer
+    transfers."""
+    return max(candidates, key=lambda c: (c["net_score"] + c.get("roll_credit", 0.0), -c["num_transfers"]))
 
 
 def wildcard_plan(projections: list, rules: dict, squad_state: dict, free_transfer_plan: dict) -> dict:
