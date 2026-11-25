@@ -2,7 +2,7 @@
 API. Run: python src/squad_sync_test.py
 """
 
-from squad_sync import _free_transfers
+from squad_sync import _free_transfers, purchase_prices
 
 BOOT = {"game_settings": {"max_extra_free_transfers": 4}}  # cap = 5
 
@@ -42,6 +42,19 @@ def test_freehit_week_does_not_burn_ft():
 def test_caps_at_five():
     ft = _free_transfers(_hist({g: 0 for g in range(1, 12)}), BOOT)
     assert ft == 5, ft  # cap = max_extra(4) + 1
+
+
+def test_purchase_price_is_what_was_paid_not_todays_price():
+    transfers = [{"event": 3, "time": "a", "element_in": 7, "element_in_cost": 55},
+                 {"event": 6, "time": "b", "element_in": 7, "element_in_cost": 58}]  # sold and rebought
+    paid = purchase_prices([7, 9], transfers, set(), lambda pid: 45)
+    assert paid == {7: 58, 9: 45}, paid  # 9 never transferred in -> initial-squad price
+
+
+def test_free_hit_transfers_are_ignored():
+    transfers = [{"event": 4, "time": "a", "element_in": 7, "element_in_cost": 60},
+                 {"event": 8, "time": "b", "element_in": 7, "element_in_cost": 64}]  # free-hit week
+    assert purchase_prices([7], transfers, {8}, lambda pid: 0) == {7: 60}
 
 
 def main():

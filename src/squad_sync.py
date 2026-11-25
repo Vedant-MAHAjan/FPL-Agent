@@ -2,15 +2,15 @@
 
 The weekly pipeline reasons about the *real* current squad, so this pulls the latest set team,
 bank, chip usage, and a best-effort free-transfer count straight from the public API - the state
-file is never hand-maintained (and never silently stale). purchase_price is NOT public, so it is
-carried over from the existing state file where a player is still owned, and approximated by
-now_cost for newly added players (fine early season; the sell-price nuance only matters once a
-player has risen a lot).
+file is never hand-maintained (and never silently stale). purchase_price comes from the transfers
+endpoint (element_in_cost of the player's latest transfer in), or his GW1 price for a player kept
+from the initial squad - not from now_cost at sync time, which drifts whenever prices move between
+the transfer and the sync (that put a wildcard £0.1m over budget).
 """
 import argparse
 
 import memory
-from fpl_api import get_bootstrap_static, get_entry_history, get_entry_picks
+from fpl_api import get_bootstrap_static, get_element_summary, get_entry_history, get_entry_picks, get_entry_transfers
 
 
 def _latest_picks(entry_id: int, bootstrap: dict):
@@ -65,6 +65,21 @@ def _chip_inventory(bootstrap: dict, history: dict) -> dict:
     return chips
 
 
+def purchase_prices(squad_ids, transfers: list, freehit_gws: set, initial_price) -> dict:
+    """id -> price actually paid. Latest transfer in wins; free-hit weeks are ignored because that
+    squad reverts. Players never transferred in were in the initial squad: initial_price(id)."""
+    paid = {}
+    for t in sorted(transfers, key=lambda t: (t["event"], t["time"])):
+        if t["event"] not in freehit_gws:
+            paid[t["element_in"]] = t["element_in_cost"]
+    return {pid: paid[pid] if pid in paid else initial_price(pid) for pid in squad_ids}
+
+
+def _gw1_price(pid: int) -> int:
+    hist = get_element_summary(pid)["history"]
+    return hist[0]["value"] if hist else None
+
+
 def sync_squad_state(entry_id: int) -> dict:
     bootstrap = get_bootstrap_static()
     el = {e["id"]: e for e in bootstrap["elements"]}
@@ -72,11 +87,9 @@ def sync_squad_state(entry_id: int) -> dict:
     gw, picks = _latest_picks(entry_id, bootstrap)
     eh = picks["entry_history"]
 
-    prior_pp = {}
-    try:
-        prior_pp = {p["id"]: p["purchase_price"] for p in memory.get_squad_state()["squad"]}
-    except FileNotFoundError:
-        pass
+    freehit_gws = {c["event"] for c in history.get("chips", []) if c["name"] == "freehit"}
+    paid = purchase_prices([p["element"] for p in picks["picks"]], get_entry_transfers(entry_id),
+                           freehit_gws, _gw1_price)
 
     squad = []
     for p in picks["picks"]:
@@ -84,7 +97,7 @@ def sync_squad_state(entry_id: int) -> dict:
         squad.append({
             "id": e["id"], "web_name": e["web_name"], "team": e["team"],
             "element_type": e["element_type"],
-            "purchase_price": prior_pp.get(e["id"], e["now_cost"]),
+            "purchase_price": paid[e["id"]] if paid[e["id"]] is not None else e["now_cost"],
         })
 
     cap = next((p["element"] for p in picks["picks"] if p["is_captain"]), None)

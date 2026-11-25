@@ -52,3 +52,11 @@ def get_classic_league_standings(league_id: int, page: int = 1) -> dict:
                         params={"page_standings": page}, timeout=TIMEOUT)
     resp.raise_for_status()
     return resp.json()
+
+
+def get_entry_transfers(entry_id: int) -> list:
+    """Every transfer an entry has made this season, with element_in_cost (the price actually paid).
+    Transfers for an upcoming gameweek only appear after its deadline."""
+    resp = requests.get(f"{BASE_URL}/entry/{entry_id}/transfers/", timeout=TIMEOUT)
+    resp.raise_for_status()
+    return resp.json()
