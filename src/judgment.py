@@ -34,6 +34,10 @@ VALID_CONFIDENCE = {HIGH, MEDIUM, LOW}
 
 OVERRIDE_GAP_LIMIT = 1.0  # projected points per gameweek
 
+# What each confidence tier claims: the probability a call beats the road not taken. Starting
+# assumptions, not fitted - the Brier scores in memory.compute_calibration test them.
+TIER_PROBABILITY = {HIGH: 0.75, MEDIUM: 0.60, LOW: 0.50}
+
 
 def is_unsupported_override(action, projection_gap_per_gw, sources) -> bool:
     """True when an override bets against more than OVERRIDE_GAP_LIMIT points per gameweek of
@@ -43,7 +47,7 @@ def is_unsupported_override(action, projection_gap_per_gw, sources) -> bool:
 
 
 def judgment_call(player_id, player_name, projected_points, action, confidence, rationale, sources=None,
-                  projection_gap_per_gw=None):
+                  projection_gap_per_gw=None, alternative_id=None, probability=None):
     """projection_gap_per_gw: how many projected points per gameweek this call bets against the
     numeric pick (0 or None for a CONFIRM)."""
     if action not in VALID_ACTIONS:
@@ -64,6 +68,10 @@ def judgment_call(player_id, player_name, projected_points, action, confidence, 
         "sources": sources or [],
         "projection_gap_per_gw": projection_gap_per_gw,
         "unsupported_override": unsupported,
+        # The bet: the player chosen (player_id, or alternative_id for a SELL/VETO) outscores the one
+        # passed over, with this probability (default: the tier's).
+        "alternative_id": alternative_id,
+        "probability": probability if probability is not None else TIER_PROBABILITY[confidence],
     }
 
 

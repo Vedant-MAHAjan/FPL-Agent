@@ -130,6 +130,21 @@ def test_a_sell_is_right_when_the_player_undershoots():
     assert calls[30]["right"] is True and calls[31]["right"] is False, calls
 
 
+def test_bet_on_a_pick_and_on_a_sale():
+    from memory import score_bet
+    pts = {1: 8, 2: 3}.get
+    pick = score_bet({"player_id": 1, "alternative_id": 2, "action": "PROPOSE", "confidence": "Medium"}, pts)
+    assert pick["won"] == 1.0 and abs(pick["brier"] - 0.16) < 1e-9  # (0.6 - 1)^2
+    sale = score_bet({"player_id": 1, "alternative_id": 2, "action": "SELL", "confidence": "High"}, pts)
+    assert sale["chosen"] == 2 and sale["won"] == 0.0 and abs(sale["brier"] - 0.5625) < 1e-9  # sold the 8-pointer
+
+
+def test_tie_and_no_alternative():
+    from memory import score_bet
+    assert score_bet({"player_id": 1, "alternative_id": 2, "action": "ADJUST", "confidence": "Low"}, {1: 2, 2: 2}.get)["won"] == 0.5
+    assert score_bet({"player_id": 1, "action": "ADJUST", "confidence": "Low"}, {1: 2}.get) is None
+
+
 def main():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:

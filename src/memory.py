@@ -18,7 +18,7 @@ import os
 from datetime import datetime, timezone
 
 from fpl_api import get_bootstrap_static, get_entry_picks, get_event_live
-from judgment import SELL, VETO
+from judgment import SELL, TIER_PROBABILITY, VETO
 
 MEMORY_DIR = os.path.join(os.path.dirname(__file__), "..", "data", "memory")
 DECISIONS_PATH = os.path.join(MEMORY_DIR, "decisions.jsonl")
@@ -272,6 +272,22 @@ def _actual_squad(gw: int) -> list:
     return [p["element"] for p in sorted(picks, key=lambda p: p["position"])]
 
 
+def score_bet(call: dict, pts) -> dict | None:
+    """A call's head-to-head bet: the player chosen outscores the one passed over. For a SELL or VETO
+    the call names the player rejected, so the alternative is the one chosen. None when the call
+    logged no alternative (no bet to score). Tie = 0.5. Brier = (probability - outcome)^2.
+    Compares the two players' points only - a transfer hit or an auto-sub around the call isn't
+    counted (GW6's kept Gakpo lost his bet to Mbeumo but tied once Mbeumo's -4 is included)."""
+    alt = call.get("alternative_id") or call.get("replacement_id")
+    if alt is None:
+        return None
+    chosen, rejected = (alt, call["player_id"]) if call["action"] in (SELL, VETO) else (call["player_id"], alt)
+    diff = pts(chosen) - pts(rejected)
+    won = 1.0 if diff > 0 else 0.0 if diff < 0 else 0.5
+    p = call.get("probability", TIER_PROBABILITY.get(call["confidence"], 0.5))
+    return {"chosen": chosen, "rejected": rejected, "probability": p, "won": won, "brier": round((p - won) ** 2, 4)}
+
+
 def record_outcome(gw: int, live_points_by_id: dict = None, force: bool = False,
                    live_minutes_by_id: dict = None, element_type_by_id: dict = None,
                    rescore: bool = False) -> dict:
@@ -387,6 +403,7 @@ def record_outcome(gw: int, live_points_by_id: dict = None, force: bool = False,
             "right": (None if projected_per_gw is None else
                       (actual <= projected_per_gw) if call["action"] in (SELL, VETO) else (actual >= projected_per_gw)),
             # Explicit flag wins: a cited opinion piece is a source but not hard news.
+            "bet": score_bet(call, pts),
             "news_backed": call.get("news_backed", bool(call.get("sources")) and not call.get("unsupported_override")),
             "unsupported_override": call.get("unsupported_override", False),
         }
@@ -483,8 +500,20 @@ def compute_calibration() -> dict:
                 overrides["news_backed" if o.get("news_backed") else "argument_only"].append(right)
     by_support = {k: {"n": len(v), "right_rate": round(sum(v) / len(v), 3) if v else None}
                   for k, v in overrides.items()}
+    # Brier score per tier over the head-to-head bets: stated probability vs how often it came off.
+    bets = {}
+    for r in records:
+        for o in r["outcome"]["judgment_call_outcomes"]:
+            if o.get("bet"):
+                bets.setdefault(o["confidence"], []).append(o["bet"])
+    by_bets = {
+        tier: {"n": len(b), "stated": round(sum(x["probability"] for x in b) / len(b), 2),
+               "hit_rate": round(sum(x["won"] for x in b) / len(b), 3),
+               "brier": round(sum(x["brier"] for x in b) / len(b), 3)}
+        for tier, b in bets.items()
+    }
     return {"status": f"{len(records)} resolved gameweek(s)", "by_confidence": summary,
-            "overrides_by_support": by_support}
+            "overrides_by_support": by_support, "bets_by_confidence": by_bets}
 
 
 def compute_season_comparison() -> dict:
