@@ -224,12 +224,13 @@ def apply_auto_subs(xi_ids: list, bench_ids: list, minutes_by_id: dict, element_
 
 
 def _score_side(xi_ids, bench_ids, captain_id, vice_id, points_hit, pts, minutes_by_id,
-                element_type_by_id, min_play):
+                element_type_by_id, min_play, bench_boost=False):
     """Points one side actually banks: XI after auto-subs, captain doubled (armband passes to the
     vice-captain if the captain didn't play), minus the side's transfer hit. Auto-subs are skipped
-    when minutes or the bench aren't known, and that is reported rather than guessed."""
+    when minutes or the bench aren't known, and that is reported rather than guessed. With a bench
+    boost every one of the 15 scores, so there are no auto-subs and the bench is added."""
     subs = []
-    autosubs_applied = minutes_by_id is not None and bool(bench_ids)
+    autosubs_applied = minutes_by_id is not None and bool(bench_ids) and not bench_boost
     if autosubs_applied:
         xi_ids, subs = apply_auto_subs(xi_ids, bench_ids, minutes_by_id, element_type_by_id, min_play)
     armband = captain_id
@@ -237,8 +238,10 @@ def _score_side(xi_ids, bench_ids, captain_id, vice_id, points_hit, pts, minutes
             and minutes_by_id.get(vice_id, 0) > 0:
         armband = vice_id
     gross = sum(pts(p) for p in xi_ids) + pts(armband)
+    if bench_boost:
+        gross += sum(pts(p) for p in bench_ids)
     return {"gross": gross, "hit": points_hit, "total": gross - points_hit, "armband_id": armband,
-            "auto_subs": subs, "autosubs_applied": autosubs_applied}
+            "auto_subs": subs, "autosubs_applied": autosubs_applied, "bench_boost": bench_boost}
 
 
 def _actual_lineup(gw: int) -> dict | None:
@@ -361,10 +364,10 @@ def record_outcome(gw: int, live_points_by_id: dict = None, force: bool = False,
 
     j = _score_side(record["starting_xi_ids"], j_bench, record["captain_id"],
                     record["vice_captain_id"], judgment_hit, pts, live_minutes_by_id,
-                    element_type_by_id, min_play)
+                    element_type_by_id, min_play, bench_boost=record.get("chip") == "bboost")
     b = _score_side(record["baseline_starting_xi_ids"], b_bench, record["baseline_captain_id"],
                     record.get("baseline_vice_captain_id"), baseline_hit, pts, live_minutes_by_id,
-                    element_type_by_id, min_play)
+                    element_type_by_id, min_play, bench_boost=record.get("baseline_chip") == "bboost")
     captain_pts = pts(record["captain_id"])
     baseline_captain_pts = pts(record["baseline_captain_id"])
     total, baseline_total = j["total"], b["total"]

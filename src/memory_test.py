@@ -145,6 +145,15 @@ def test_tie_and_no_alternative():
     assert score_bet({"player_id": 1, "action": "ADJUST", "confidence": "Low"}, {1: 2}.get) is None
 
 
+def test_bench_boost_counts_all_fifteen_without_autosubs():
+    points = {**{i: 2 for i in POS}, 21: 0}  # 21 starts but doesn't play
+    mins = {**ALL_PLAYED, 21: 0}
+    o = _resolve(_record(chip="bboost", baseline_chip="bboost"), points, mins)
+    j = o["judgment_scoring"]
+    # no auto-sub for 21; XI 10x2 + 0, captain 30 doubled (+2), bench 4x2
+    assert j["auto_subs"] == [] and j["gross"] == 20 + 2 + 8, j
+
+
 def main():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:
