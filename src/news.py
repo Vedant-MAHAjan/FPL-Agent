@@ -20,6 +20,7 @@ import re
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
+from urllib.parse import quote_plus
 
 import requests
 
@@ -31,8 +32,19 @@ FEEDS = {
     "bbc_football": "https://feeds.bbci.co.uk/sport/football/rss.xml",
     "bbc_premier_league": "https://feeds.bbci.co.uk/sport/football/premier-league/rss.xml",
     "fantasy_football_scout": "https://www.fantasyfootballscout.co.uk/feed/",
-    "fantasy_football_pundit": "https://fantasyfootballpundit.com/feed/",
 }
+
+# Per-player search: Google News' keyless RSS. The general feeds above rarely name a given player;
+# this is what found the October injury news that drove the only news-backed overrides.
+GOOGLE_NEWS_SEARCH = "https://news.google.com/rss/search?q={query}&hl=en-GB&gl=GB&ceid=GB:en"
+
+# Headline terms that mark hard news - the only kind the override guardrail accepts (injury,
+# availability, suspension, confirmed team news), as opposed to opinion and previews.
+HARD_NEWS_TERMS = [
+    "injury", "injured", "ruled out", "out for", "doubt", "fitness", "suspended", "suspension",
+    "ban", "illness", "knock", "setback", "return date", "back in training", "will miss",
+    "confirmed line", "starting line", "team news", "scan", "surgery", "hamstring", "ankle", "knee",
+]
 
 # Titles/summaries containing these look like FPL strategy content even when they don't name a
 # specific squad player - filter_relevant()'s name-matching would miss "FPL Gameweek 7 Tips"
@@ -90,6 +102,37 @@ def fetch_all_feeds(feeds: dict = None, max_age_days: int = MAX_ARTICLE_AGE_DAYS
         except requests.RequestException as e:
             print(f"warning: could not fetch {name} ({url}): {e}")
     return all_items
+
+
+def is_hard_news(title: str) -> bool:
+    t = title.lower()
+    return any(re.search(rf"(?<!\w){re.escape(term)}(?!\w)", t) for term in HARD_NEWS_TERMS)
+
+
+def player_news_url(name: str, club: str) -> str:
+    """Google News search for one player at one club, steered toward availability news."""
+    surname = _aliases(name)[-1]
+    query = f'"{surname}" {club} (injury OR fitness OR "team news" OR suspended OR "ruled out")'
+    return GOOGLE_NEWS_SEARCH.format(query=quote_plus(query))
+
+
+def _published_at(item: dict) -> datetime:
+    try:
+        dt = parsedate_to_datetime(item["published"])
+    except (TypeError, ValueError):
+        return datetime.min.replace(tzinfo=timezone.utc)
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
+def player_news(name: str, club: str, max_age_days: int = 4, max_items: int = 5) -> list:
+    """The newest few Google News items for a player, each tagged hard_news (a big story returns
+    100 near-duplicates). Empty on a fetch error - a news outage must never block the weekly run."""
+    try:
+        items = fetch_feed(player_news_url(name, club))
+    except (requests.RequestException, ET.ParseError):
+        return []
+    recent = sorted((i for i in items if _is_recent(i["published"], max_age_days)), key=_published_at, reverse=True)
+    return [{**i, "hard_news": is_hard_news(i["title"])} for i in recent[:max_items]]
 
 
 def _aliases(name: str) -> list:

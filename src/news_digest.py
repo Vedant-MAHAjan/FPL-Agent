@@ -10,7 +10,7 @@ import json
 import os
 
 import memory
-from news import fetch_all_feeds, filter_expert_content, filter_relevant
+from news import fetch_all_feeds, filter_expert_content, filter_relevant, player_news
 from optimizer import squad_rules_from_bootstrap
 from projections import build_multi_gw_projections, load_preseason_rate_baseline
 from transfer import next_best_targets
@@ -35,8 +35,18 @@ def build_digest(bootstrap: dict, state: dict, watchlist: list = None) -> dict:
     team_names = sorted(set(teams_by_id[p["team"]] for p in state["squad"]))
 
     items = fetch_all_feeds()
+    # Per-player hard news (injury/availability/suspension), squad and watchlist - what the
+    # override guardrail needs, instead of hoping a general feed happens to name the player.
+    team_of = {e["id"]: e["team"] for e in bootstrap["elements"]}
+    hard_news = {}
+    for p in list(state["squad"]) + list(watchlist or []):
+        club = teams_by_id[team_of[p["id"]]]
+        found = [i for i in player_news(p["web_name"], club) if i["hard_news"]]
+        if found:
+            hard_news[p["web_name"]] = found
 
     return {
+        "hard_news": hard_news,
         "items_pulled": len(items),
         "feeds_used": sorted(set(i["source"] for i in items)),
         "player_matches": filter_relevant(items, squad_names),
@@ -78,6 +88,7 @@ def main():
     print(f"Pulled {digest['items_pulled']} articles across {len(digest['feeds_used'])} feed(s): "
           f"{', '.join(digest['feeds_used'])}")
 
+    _print_matches("HARD NEWS (injury / availability / suspension, per-player search)", digest["hard_news"])
     _print_matches("SQUAD PLAYER MENTIONS", digest["player_matches"])
     _print_matches("TRANSFER WATCHLIST MENTIONS", digest["watchlist_matches"])
     _print_matches("CLUB MENTIONS", digest["club_matches"])
